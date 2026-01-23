@@ -3,11 +3,12 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
-  "scripts": {
-    "dev": "ts-node-dev src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js"
-  },
+"scripts": {
+  "dev": "ts-node-dev --respawn src/index.ts",
+  "build": "tsc",
+  "start": "node dist/index.js"
+},
+
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bratttv/ai-medspa-receptionist.git"
@@ -21,6 +22,7 @@
   },
   "homepage": "https://github.com/bratttv/ai-medspa-receptionist#readme",
   "dependencies": {
+    "@supabase/supabase-js": "^2.91.1",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^5.2.1"

@@ -1,12 +1,10 @@
-// src/services/calendar.service.ts
-
 import { google } from "googleapis";
 
-// 1. UPDATE THIS PART
+// ... existing auth setup ...
 const auth = new google.auth.JWT({
   email: process.env.GC_CLIENT_EMAIL,
   key: process.env.GC_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-  scopes: ["https://www.googleapis.com/auth/calendar"], // <--- REMOVE ".readonly"
+  scopes: ["https://www.googleapis.com/auth/calendar"], // <--- UPDATE THIS SCOPE
 });
 
 const calendar = google.calendar({
@@ -14,21 +12,24 @@ const calendar = google.calendar({
   auth,
 });
 
-// ... keep your getBusyRanges function exactly as it is ...
 export async function getBusyRanges(timeMin: string, timeMax: string) {
-    // (Your existing code here)
-    if (!process.env.GC_CALENDAR_ID) throw new Error("GC_CALENDAR_ID missing");
-    const response = await calendar.freebusy.query({
-        requestBody: {
-            timeMin,
-            timeMax,
-            items: [{ id: process.env.GC_CALENDAR_ID }],
-        },
-    });
-    return response.data.calendars?.[process.env.GC_CALENDAR_ID]?.busy || [];
+  // ... your existing getBusyRanges code ...
+  // (Keep the code you already have here)
+  if (!process.env.GC_CALENDAR_ID) throw new Error("GC_CALENDAR_ID missing");
+  
+  const response = await calendar.freebusy.query({
+    requestBody: {
+      timeMin,
+      timeMax,
+      items: [{ id: process.env.GC_CALENDAR_ID }],
+    },
+  });
+  
+  const calendarData = response.data.calendars?.[process.env.GC_CALENDAR_ID];
+  return calendarData?.busy || [];
 }
 
-// 2. PASTE THIS AT THE BOTTOM
+// 👇👇 ADD THIS FUNCTION AT THE BOTTOM OF THE FILE 👇👇
 export async function createEvent(
   start: string,
   end: string,
@@ -57,4 +58,5 @@ export async function createEvent(
   });
 
   return response.data;
+  export default router;
 }

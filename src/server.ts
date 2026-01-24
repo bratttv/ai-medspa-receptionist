@@ -1,20 +1,26 @@
+// src/server.ts
 import express from "express";
-import cors from "cors";
+import dotenv from "dotenv";
+import availabilityRouter from "./routes/availability";
 
-import availabilityRoutes from "./routes/availability";
-import intentRoutes from "./routes/intent";
-import healthRoutes from "./routes/health";
-import voiceRoutes from "./routes/voice";
+// 1. ADD THESE IMPORTS
+import bookRouter from "./routes/book";
+import dbTestRouter from "./routes/db-test";
+
+dotenv.config();
 
 const app = express();
+const port = process.env.PORT || 3000;
 
-app.use(cors());
 app.use(express.json());
 
-// routes
-app.use("/", healthRoutes);
-app.use("/", voiceRoutes);
-app.use("/", intentRoutes);
-app.use("/", availabilityRoutes);
+// 2. ADD THESE ROUTES
+app.use("/", availabilityRouter);
+app.use("/", bookRouter);      // <--- Enables Booking
+app.use("/", dbTestRouter);    // <--- Enables DB Testing
+
+app.get("/health", (req, res) => {
+  res.json({ status: "ok" });
+});
 
 export default app;

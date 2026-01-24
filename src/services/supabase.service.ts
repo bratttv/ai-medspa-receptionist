@@ -1,13 +1,10 @@
+// src/services/supabase.service.ts
 import { createClient } from "@supabase/supabase-js";
+import dotenv from "dotenv";
 
-const supabaseUrl = process.env.SUPABASE_URL as string;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY as string;
+dotenv.config();
 
-if (!supabaseUrl || !supabaseServiceKey) {
-  throw new Error("Supabase environment variables missing");
-}
+const supabaseUrl = process.env.SUPABASE_URL || "";
+const supabaseKey = process.env.SUPABASE_KEY || ""; // Use your Service Role Key or Anon Key
 
-export const supabase = createClient(
-  supabaseUrl,
-  supabaseServiceKey
-);
+export const supabase = createClient(supabaseUrl, supabaseKey);

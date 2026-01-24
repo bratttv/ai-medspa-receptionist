@@ -4,15 +4,12 @@ import { addMinutes, addDays } from "date-fns";
 
 const router = Router();
 
-// Simple config (keep it boring for now)
-const BUSINESS_START_HOUR = Number(process.env.BUSINESS_START_HOUR || 9);  // 9am
-const BUSINESS_END_HOUR = Number(process.env.BUSINESS_END_HOUR || 17);    // 5pm
+// config
+const BUSINESS_START_HOUR = Number(process.env.BUSINESS_START_HOUR || 9);
+const BUSINESS_END_HOUR = Number(process.env.BUSINESS_END_HOUR || 17);
 const SLOT_MINUTES = Number(process.env.SLOT_MINUTES || 60);
 const LOOKAHEAD_DAYS = Number(process.env.LOOKAHEAD_DAYS || 7);
 
-/**
- * Check if two time ranges overlap
- */
 function overlaps(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) {
   return aStart < bEnd && bStart < aEnd;
 }
@@ -24,24 +21,26 @@ router.post("/availability", async (_req, res) => {
     const now = new Date();
     const end = addDays(now, LOOKAHEAD_DAYS);
 
-    // Get busy ranges from Google (UTC ISO strings)
-    const busy = await getBusyRanges(now.toISOString(), end.toISOString());
+    // Get busy ranges (UTC ISO strings)
+    const busy = await getBusyRanges(
+      now.toISOString(),
+      end.toISOString()
+    );
 
     const busyRanges = busy.map((b: any) => ({
       start: new Date(b.start),
       end: new Date(b.end),
     }));
 
-    const availableSlots: string[] = [];
+    const slots: string[] = [];
 
-    for (let day = 0; day < LOOKAHEAD_DAYS; day++) {
-      const dayDate = addDays(new Date(), day);
+    for (let dayOffset = 0; dayOffset < LOOKAHEAD_DAYS; dayOffset++) {
+      const dayBase = addDays(now, dayOffset);
 
-      // Set business hours on that day
-      const dayStart = new Date(dayDate);
+      const dayStart = new Date(dayBase);
       dayStart.setHours(BUSINESS_START_HOUR, 0, 0, 0);
 
-      const dayEnd = new Date(dayDate);
+      const dayEnd = new Date(dayBase);
       dayEnd.setHours(BUSINESS_END_HOUR, 0, 0, 0);
 
       for (
@@ -53,12 +52,12 @@ router.post("/availability", async (_req, res) => {
 
         if (slotEnd <= now) continue;
 
-        const conflict = busyRanges.some((busy) =>
+        const conflict = busyRanges.some(busy =>
           overlaps(slotStart, slotEnd, busy.start, busy.end)
         );
 
         if (!conflict) {
-          availableSlots.push(
+          slots.push(
             slotStart.toLocaleString("en-US", {
               weekday: "long",
               month: "long",
@@ -70,27 +69,27 @@ router.post("/availability", async (_req, res) => {
           );
         }
 
-        if (availableSlots.length >= 2) break;
+        if (slots.length >= 2) break;
       }
 
-      if (availableSlots.length >= 2) break;
+      if (slots.length >= 2) break;
     }
 
-    if (availableSlots.length === 0) {
-      return res.json({
+    if (slots.length === 0) {
+      return res.status(200).json({
         ok: false,
         message: "No availability found",
       });
     }
 
-    return res.json({
+    return res.status(200).json({
       ok: true,
-      slots: availableSlots,
+      slots,
     });
 
   } catch (err) {
     console.error("Availability error:", err);
-    return res.status(500).json({
+    return res.status(200).json({
       ok: false,
       message: "Unable to check availability",
     });

@@ -1,45 +1,44 @@
 import { google } from "googleapis";
 
-const CLIENT_EMAIL = process.env.GC_CLIENT_EMAIL;
-const PRIVATE_KEY = process.env.GC_PRIVATE_KEY ? process.env.GC_PRIVATE_KEY.replace(/\\n/g, "\n") : undefined;
-const CALENDAR_ID = process.env.GC_CALENDAR_ID;
-
-if (!CLIENT_EMAIL || !PRIVATE_KEY || !CALENDAR_ID) {
-  // don't throw here — let callers handle. But log to help debugging.
-  console.warn("Calendar service: missing GC_CLIENT_EMAIL, GC_PRIVATE_KEY or GC_CALENDAR_ID");
-}
-
+/**
+ * Create JWT auth using service account
+ */
 const auth = new google.auth.JWT({
-  email: CLIENT_EMAIL,
-  key: PRIVATE_KEY,
+  email: process.env.GC_CLIENT_EMAIL,
+  key: process.env.GC_PRIVATE_KEY?.replace(/\\n/g, "\n"),
   scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
 });
 
-const calendar = google.calendar({ version: "v3", auth });
+/**
+ * Calendar client
+ */
+const calendar = google.calendar({
+  version: "v3",
+  auth,
+});
 
 /**
- * Returns the freebusy response (busy time ranges) between timeMin and timeMax
- * items: [{ id: calendarId }]
+ * Get busy ranges using FreeBusy API
  */
-export async function getBusyRanges(timeMinIso: string, timeMaxIso: string) {
-  if (!CLIENT_EMAIL || !PRIVATE_KEY || !CALENDAR_ID) {
-    throw new Error("Calendar configuration missing (CLIENT_EMAIL / PRIVATE_KEY / CALENDAR_ID).");
+export async function getBusyRanges(timeMin: string, timeMax: string) {
+  if (!process.env.GC_CALENDAR_ID) {
+    throw new Error("GC_CALENDAR_ID is missing");
   }
 
-  const request = {
+  const response = await calendar.freebusy.query({
     requestBody: {
-      timeMin: timeMinIso,
-      timeMax: timeMaxIso,
-      items: [{ id: CALENDAR_ID }],
+      timeMin,
+      timeMax,
+      items: [{ id: process.env.GC_CALENDAR_ID }],
     },
-  };
+  });
 
-  const res = await calendar.freebusy.query(request);
-  // res.data.calendars[CALENDAR_ID].busy -> array of {start, end}
-  const cal = (res.data.calendars && res.data.calendars[CALENDAR_ID]) || null;
-  if (!cal) {
-    // something odd — return empty
+  const calendarData =
+    response.data.calendars?.[process.env.GC_CALENDAR_ID];
+
+  if (!calendarData || !calendarData.busy) {
     return [];
   }
-  return cal.busy || [];
+
+  return calendarData.busy;
 }

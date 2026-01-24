@@ -113,17 +113,17 @@ router.post("/availability", async (_req, res) => {
       if (availableSlots.length >= 2) break;
     }
 
-    return res.json({
-      ok: true,
-      slots: availableSlots,
-    });
-  } catch (err) {
-    console.error("Availability error:", err);
-    return res.status(500).json({
-      ok: false,
-      message: "Unable to check availability",
-    });
-  }
+  return res.json({
+    ok: true,
+    slots: availableSlots,
+  });
+} catch (err: any) {
+  console.error("Availability error FULL:", err);
+  return res.status(500).json({
+    ok: false,
+    message: err?.message || String(err),
+  });
+}
 });
 
 export default router;

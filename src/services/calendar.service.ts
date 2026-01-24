@@ -1,26 +1,45 @@
 import { google } from "googleapis";
 
+const CLIENT_EMAIL = process.env.GC_CLIENT_EMAIL;
+const PRIVATE_KEY = process.env.GC_PRIVATE_KEY ? process.env.GC_PRIVATE_KEY.replace(/\\n/g, "\n") : undefined;
+const CALENDAR_ID = process.env.GC_CALENDAR_ID;
+
+if (!CLIENT_EMAIL || !PRIVATE_KEY || !CALENDAR_ID) {
+  // don't throw here — let callers handle. But log to help debugging.
+  console.warn("Calendar service: missing GC_CLIENT_EMAIL, GC_PRIVATE_KEY or GC_CALENDAR_ID");
+}
+
 const auth = new google.auth.JWT({
-  email: process.env.GC_CLIENT_EMAIL,
-  key: process.env.GC_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+  email: CLIENT_EMAIL,
+  key: PRIVATE_KEY,
   scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
 });
 
-const calendar = google.calendar({
-  version: "v3",
-  auth,
-});
+const calendar = google.calendar({ version: "v3", auth });
 
-export async function getAvailability() {
-  const now = new Date().toISOString();
+/**
+ * Returns the freebusy response (busy time ranges) between timeMin and timeMax
+ * items: [{ id: calendarId }]
+ */
+export async function getBusyRanges(timeMinIso: string, timeMaxIso: string) {
+  if (!CLIENT_EMAIL || !PRIVATE_KEY || !CALENDAR_ID) {
+    throw new Error("Calendar configuration missing (CLIENT_EMAIL / PRIVATE_KEY / CALENDAR_ID).");
+  }
 
-  const res = await calendar.events.list({
-    calendarId: process.env.GC_CALENDAR_ID,
-    timeMin: now,
-    maxResults: 5,
-    singleEvents: true,
-    orderBy: "startTime",
-  });
+  const request = {
+    requestBody: {
+      timeMin: timeMinIso,
+      timeMax: timeMaxIso,
+      items: [{ id: CALENDAR_ID }],
+    },
+  };
 
-  return res.data.items || [];
+  const res = await calendar.freebusy.query(request);
+  // res.data.calendars[CALENDAR_ID].busy -> array of {start, end}
+  const cal = (res.data.calendars && res.data.calendars[CALENDAR_ID]) || null;
+  if (!cal) {
+    // something odd — return empty
+    return [];
+  }
+  return cal.busy || [];
 }

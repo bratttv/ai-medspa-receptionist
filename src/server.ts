@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 
+import intentRoutes from "./routes/intent";
 import healthRoutes from "./routes/health";
 import dbTestRoutes from "./routes/db-test";
 import voiceRoutes from "./routes/voice";
@@ -14,5 +15,6 @@ app.use(express.json());
 app.use("/", healthRoutes);
 app.use("/", dbTestRoutes);
 app.use("/", voiceRoutes);
+app.use("/", intentRoutes);
 
 export default app;

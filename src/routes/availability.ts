@@ -14,6 +14,7 @@ function overlaps(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) {
 }
 
 router.post("/availability", async (_req, res) => {
+    console.log("AVAILABILITY ENDPOINT HIT");
   try {
     const events = await getAvailability();
 

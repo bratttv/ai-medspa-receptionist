@@ -92,17 +92,20 @@ router.post("/availability", async (_req, res) => {
         );
 
         if (!conflict) {
-          availableSlots.push(
-            slotZoned.toLocaleString("en-US", {
-              weekday: "long",
-              month: "long",
-              day: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-              hour12: true,
-              timeZone: TIMEZONE,
-            })
-          );
+         const displayTime = toZonedTime(slotStartUtc, TIMEZONE);
+
+    availableSlots.push(
+    displayTime.toLocaleString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: TIMEZONE,
+  })
+);
+
         }
 
         if (availableSlots.length >= 2) break;

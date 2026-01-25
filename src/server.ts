@@ -9,6 +9,7 @@ import crmRouter from "./routes/crm";
 import cancelRouter from "./routes/cancel";
 import availabilityRouter from "./routes/availability"; 
 import { startScheduler } from "./services/scheduler";
+import transferRouter from "./routes/transfer";
 
 dotenv.config();
 
@@ -24,7 +25,8 @@ app.use("/", bookRouter);
 app.use("/", inboundSmsRouter);
 app.use("/", crmRouter);
 app.use("/", cancelRouter);
-app.use("/", availabilityRouter); // <--- THIS PLUGS IT IN
+app.use("/", availabilityRouter); 
+app.use("/", transferRouter);
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });

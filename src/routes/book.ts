@@ -1,57 +1,47 @@
 import { Router } from "express";
-import { createEvent, getBusyRanges } from "../services/calendar.service";
 import { supabase } from "../services/supabase.service";
-import { addMinutes } from "date-fns";
-import { sendConfirmationSMS } from "../services/sms.service"; 
+import { sendConfirmationSMS } from "../services/sms.service";
 
 const router = Router();
-const SLOT_MINUTES = Number(process.env.SLOT_MINUTES || 60);
 
 router.post("/book", async (req, res) => {
   console.log("--- BOOKING REQUEST RECEIVED ---");
 
-  const toolCall = req.body.message.toolCallList?.[0];
-  const toolCallId = toolCall?.id;
-
-  if (!toolCallId) return res.status(200).send(""); 
-
   try {
-    const args = toolCall.function.arguments;
-    console.log("Arguments received:", JSON.stringify(args));
-
-    const clientName = args.name || "Valued Client";
-    const serviceType = args.service || "Consultation";
-    const clientEmail = args.email || "";
-    const clientPhone = args.phone || "";
-    let startTimeStr = args.dateTime;
-
-    if (!startTimeStr) {
-      throw new Error("Missing 'dateTime' argument. AI did not send a date.");
+    // 1. ROBUST ARGUMENT EXTRACTION
+    // Handles both "old" Vapi (functionCall) and "new" Vapi (toolCalls)
+    let args = req.body.message.functionCall?.parameters;
+    if (!args && req.body.message.toolCalls) {
+      args = JSON.parse(req.body.message.toolCalls[0].function.arguments);
+    }
+    
+    // Safety check: if Vapi sent nothing
+    if (!args) {
+      console.log("No arguments found.");
+      return res.status(200).send("");
     }
 
+    console.log("Arguments:", args);
+
+    const clientName = args.name || args.client_name || "Valued Client";
+    const serviceType = args.service || args.service_type || "Consultation";
+    const clientPhone = args.phone || args.client_phone || "";
+    const clientEmail = args.email || args.client_email || "";
+    
+    // Handle Date/Time (Accepts "dateTime" combined OR "date" + "time" separate)
+    let startTimeStr = args.dateTime; 
+    if (!startTimeStr && args.date && args.time) {
+      startTimeStr = `${args.date} ${args.time}`;
+    }
+
+    // 2. CREATE TIMESTAMP
     const start = new Date(startTimeStr);
     if (isNaN(start.getTime())) {
-       throw new Error(`Invalid date format received: ${startTimeStr}`);
+      console.error("Invalid Date:", startTimeStr);
+      return res.json({ results: [{ result: "I didn't catch the date correctly. Could you repeat it?" }] });
     }
 
-    const end = addMinutes(start, SLOT_MINUTES);
-
-    // --- 1. GOOGLE CALENDAR ---
-    console.log("Attempting Google Calendar...");
-    const summary = `${serviceType} for ${clientName}`;
-    const description = `Phone: ${clientPhone}\nEmail: ${clientEmail}`;
-    
-    const googleEvent = await createEvent(
-      start.toISOString(),
-      end.toISOString(),
-      summary,
-      description,
-      clientEmail
-    );
-    console.log("Google Calendar Success:", googleEvent.id);
-
-    // --- 2. SUPABASE ---
-    console.log("Attempting Supabase...");
+    // 3. SAVE TO SUPABASE (No Google Calendar!)
     const { error: dbError } = await supabase
       .from('appointments')
       .insert([
@@ -61,38 +51,34 @@ router.post("/book", async (req, res) => {
           client_phone: clientPhone,
           service_type: serviceType,
           start_time: start.toISOString(),
-          google_event_id: googleEvent.id,
           status: 'confirmed'
+          // Removed google_event_id
         }
       ]);
 
     if (dbError) {
-      console.error("SUPABASE ERROR:", dbError); 
-    } else {
-      console.log("Supabase Success");
+      console.error("Supabase Error:", dbError);
+      throw new Error("Database save failed");
     }
 
-    // 👇 3. SEND SMS (ADD THIS PART HERE) 👇
-    // This happens right after saving to the database, but before telling the AI "success"
-    console.log("Attempting SMS...");
-    sendConfirmationSMS(clientPhone, clientName, start.toISOString(), serviceType);
+    // 4. SEND SMS
+    if (clientPhone) {
+      console.log("Sending SMS...");
+      await sendConfirmationSMS(clientPhone, clientName, start.toISOString(), serviceType);
+    }
 
-    // --- 4. SUCCESS RESPONSE ---
-    return res.status(200).json({
+    // 5. SUCCESS RESPONSE
+    return res.json({
       results: [{
-        toolCallId: toolCallId,
-        result: "success"
+        result: `Success. I have booked ${serviceType} for ${clientName} on ${start.toLocaleString()}.`
       }]
     });
 
-  } catch (err: any) {
-    console.error("CRITICAL BOOKING ERROR:", err.message); 
-    console.error(err);
-
-    return res.status(200).json({
+  } catch (err) {
+    console.error("Booking Error:", err);
+    return res.json({
       results: [{
-        toolCallId: toolCallId,
-        result: "There was a technical error booking the appointment."
+        result: "I had a technical issue finalizing that booking. Please try again."
       }]
     });
   }

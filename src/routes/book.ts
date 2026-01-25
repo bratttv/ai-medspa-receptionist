@@ -1,47 +1,43 @@
-// src/routes/book.ts
 import { Router } from "express";
 import { createEvent, getBusyRanges } from "../services/calendar.service";
-import { supabase } from "../services/supabase.service"; 
+import { supabase } from "../services/supabase.service";
 import { addMinutes } from "date-fns";
+import { sendConfirmationSMS } from "../services/sms.service"; 
 
 const router = Router();
 const SLOT_MINUTES = Number(process.env.SLOT_MINUTES || 60);
 
 router.post("/book", async (req, res) => {
-  console.log("BOOKING ENDPOINT HIT");
+  console.log("--- BOOKING REQUEST RECEIVED ---");
 
   const toolCall = req.body.message.toolCallList?.[0];
   const toolCallId = toolCall?.id;
 
-  if (!toolCallId) {
-     return res.status(200).send(""); 
-  }
+  if (!toolCallId) return res.status(200).send(""); 
 
   try {
     const args = toolCall.function.arguments;
+    console.log("Arguments received:", JSON.stringify(args));
+
     const clientName = args.name || "Valued Client";
     const serviceType = args.service || "Consultation";
     const clientEmail = args.email || "";
     const clientPhone = args.phone || "";
-    const startTimeStr = args.dateTime;
+    let startTimeStr = args.dateTime;
 
-    if (!startTimeStr) throw new Error("No date time provided");
-
-    const start = new Date(startTimeStr);
-    const end = addMinutes(start, SLOT_MINUTES);
-
-    // 1. Safety Check (Google Calendar)
-    const busy = await getBusyRanges(start.toISOString(), end.toISOString());
-    if (busy.length > 0) {
-      return res.status(200).json({
-        results: [{
-          toolCallId: toolCallId,
-          result: "I apologize, but that time slot was just taken. Please ask for a different time."
-        }]
-      });
+    if (!startTimeStr) {
+      throw new Error("Missing 'dateTime' argument. AI did not send a date.");
     }
 
-    // 2. Create Google Calendar Event
+    const start = new Date(startTimeStr);
+    if (isNaN(start.getTime())) {
+       throw new Error(`Invalid date format received: ${startTimeStr}`);
+    }
+
+    const end = addMinutes(start, SLOT_MINUTES);
+
+    // --- 1. GOOGLE CALENDAR ---
+    console.log("Attempting Google Calendar...");
     const summary = `${serviceType} for ${clientName}`;
     const description = `Phone: ${clientPhone}\nEmail: ${clientEmail}`;
     
@@ -52,8 +48,10 @@ router.post("/book", async (req, res) => {
       description,
       clientEmail
     );
+    console.log("Google Calendar Success:", googleEvent.id);
 
-    // 3. CRM Logging (Supabase)
+    // --- 2. SUPABASE ---
+    console.log("Attempting Supabase...");
     const { error: dbError } = await supabase
       .from('appointments')
       .insert([
@@ -69,10 +67,17 @@ router.post("/book", async (req, res) => {
       ]);
 
     if (dbError) {
-      console.error("Supabase logging error:", dbError);
+      console.error("SUPABASE ERROR:", dbError); 
+    } else {
+      console.log("Supabase Success");
     }
 
-    // 4. Success Response
+    // 👇 3. SEND SMS (ADD THIS PART HERE) 👇
+    // This happens right after saving to the database, but before telling the AI "success"
+    console.log("Attempting SMS...");
+    sendConfirmationSMS(clientPhone, clientName, start.toISOString(), serviceType);
+
+    // --- 4. SUCCESS RESPONSE ---
     return res.status(200).json({
       results: [{
         toolCallId: toolCallId,
@@ -80,8 +85,10 @@ router.post("/book", async (req, res) => {
       }]
     });
 
-  } catch (err) {
-    console.error("Booking error:", err);
+  } catch (err: any) {
+    console.error("CRITICAL BOOKING ERROR:", err.message); 
+    console.error(err);
+
     return res.status(200).json({
       results: [{
         toolCallId: toolCallId,

@@ -11,6 +11,7 @@ import availabilityRouter from "./routes/availability";
 import { startScheduler } from "./services/scheduler";
 import transferRouter from "./routes/transfer";
 import rescheduleRouter from "./routes/reschedule";
+import notifyRouter from "./routes/notify";
 
 dotenv.config();
 
@@ -29,6 +30,7 @@ app.use("/", cancelRouter);
 app.use("/", availabilityRouter); 
 app.use("/", transferRouter);
 app.use("/", rescheduleRouter);
+app.use("/", notifyRouter);
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });

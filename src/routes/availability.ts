@@ -15,7 +15,7 @@ function overlaps(startA: Date, endA: Date, startB: Date, endB: Date) {
   return startA < endB && startB < endA;
 }
 
-router.post("/check-availability", async (req, res) => {
+router.post("/check_availability", async (req, res) => {
   try {
     // 1. Get parameters from Vapi (Handling both new and old Vapi formats)
     let params = req.body.message.functionCall?.parameters;

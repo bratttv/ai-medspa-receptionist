@@ -38,16 +38,16 @@ export async function createEvent(
     throw new Error("GC_CALENDAR_ID is missing");
   }
 
+  // Define the event WITHOUT attendees to avoid the "403 Forbidden" error
   const event: any = {
     summary,
-    description,
+    description, // The email is still saved here in the description!
     start: { dateTime: start },
     end: { dateTime: end },
   };
 
-  if (attendeeEmail) {
-    event.attendees = [{ email: attendeeEmail }];
-  }
+  // REMOVED: The block that added 'attendees' caused the crash.
+  // We keep the logic simple: just book the slot on the MedSpa calendar.
 
   const response = await calendar.events.insert({
     calendarId: process.env.GC_CALENDAR_ID,

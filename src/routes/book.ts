@@ -1,62 +1,94 @@
-import { google } from "googleapis";
+// src/routes/book.ts
+import { Router } from "express";
+import { createEvent, getBusyRanges } from "../services/calendar.service";
+import { supabase } from "../services/supabase.service"; 
+import { addMinutes } from "date-fns";
 
-// ... existing auth setup ...
-const auth = new google.auth.JWT({
-  email: process.env.GC_CLIENT_EMAIL,
-  key: process.env.GC_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-  scopes: ["https://www.googleapis.com/auth/calendar"], // <--- UPDATE THIS SCOPE
-});
+const router = Router();
+const SLOT_MINUTES = Number(process.env.SLOT_MINUTES || 60);
 
-const calendar = google.calendar({
-  version: "v3",
-  auth,
-});
+router.post("/book", async (req, res) => {
+  console.log("BOOKING ENDPOINT HIT");
 
-export async function getBusyRanges(timeMin: string, timeMax: string) {
-  // ... your existing getBusyRanges code ...
-  // (Keep the code you already have here)
-  if (!process.env.GC_CALENDAR_ID) throw new Error("GC_CALENDAR_ID missing");
-  
-  const response = await calendar.freebusy.query({
-    requestBody: {
-      timeMin,
-      timeMax,
-      items: [{ id: process.env.GC_CALENDAR_ID }],
-    },
-  });
-  
-  const calendarData = response.data.calendars?.[process.env.GC_CALENDAR_ID];
-  return calendarData?.busy || [];
-}
+  const toolCall = req.body.message.toolCallList?.[0];
+  const toolCallId = toolCall?.id;
 
-// 👇👇 ADD THIS FUNCTION AT THE BOTTOM OF THE FILE 👇👇
-export async function createEvent(
-  start: string,
-  end: string,
-  summary: string,
-  description: string,
-  attendeeEmail?: string
-) {
-  if (!process.env.GC_CALENDAR_ID) {
-    throw new Error("GC_CALENDAR_ID is missing");
+  if (!toolCallId) {
+     return res.status(200).send(""); 
   }
 
-  const event: any = {
-    summary,
-    description,
-    start: { dateTime: start },
-    end: { dateTime: end },
-  };
+  try {
+    const args = toolCall.function.arguments;
+    const clientName = args.name || "Valued Client";
+    const serviceType = args.service || "Consultation";
+    const clientEmail = args.email || "";
+    const clientPhone = args.phone || "";
+    const startTimeStr = args.dateTime;
 
-  if (attendeeEmail) {
-    event.attendees = [{ email: attendeeEmail }];
+    if (!startTimeStr) throw new Error("No date time provided");
+
+    const start = new Date(startTimeStr);
+    const end = addMinutes(start, SLOT_MINUTES);
+
+    // 1. Safety Check (Google Calendar)
+    const busy = await getBusyRanges(start.toISOString(), end.toISOString());
+    if (busy.length > 0) {
+      return res.status(200).json({
+        results: [{
+          toolCallId: toolCallId,
+          result: "I apologize, but that time slot was just taken. Please ask for a different time."
+        }]
+      });
+    }
+
+    // 2. Create Google Calendar Event
+    const summary = `${serviceType} for ${clientName}`;
+    const description = `Phone: ${clientPhone}\nEmail: ${clientEmail}`;
+    
+    const googleEvent = await createEvent(
+      start.toISOString(),
+      end.toISOString(),
+      summary,
+      description,
+      clientEmail
+    );
+
+    // 3. CRM Logging (Supabase)
+    const { error: dbError } = await supabase
+      .from('appointments')
+      .insert([
+        { 
+          client_name: clientName,
+          client_email: clientEmail,
+          client_phone: clientPhone,
+          service_type: serviceType,
+          start_time: start.toISOString(),
+          google_event_id: googleEvent.id,
+          status: 'confirmed'
+        }
+      ]);
+
+    if (dbError) {
+      console.error("Supabase logging error:", dbError);
+    }
+
+    // 4. Success Response
+    return res.status(200).json({
+      results: [{
+        toolCallId: toolCallId,
+        result: "success"
+      }]
+    });
+
+  } catch (err) {
+    console.error("Booking error:", err);
+    return res.status(200).json({
+      results: [{
+        toolCallId: toolCallId,
+        result: "There was a technical error booking the appointment."
+      }]
+    });
   }
+});
 
-  const response = await calendar.events.insert({
-    calendarId: process.env.GC_CALENDAR_ID,
-    requestBody: event,
-  });
-
-  return response.data;
-  export default router;
-}
+export default router;

@@ -3,7 +3,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 import bookRouter from "./routes/book";
 // 👇 1. Import the new router
-import inboundSmsRouter from "./routes/inbound-sms"; 
+import inboundSmsRouter from "./routes/inbound-sms";
+import crmRouter from "./routes/crm"; 
 
 dotenv.config();
 
@@ -20,6 +21,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/", bookRouter);
 // 👇 3. Mount the new router
 app.use("/", inboundSmsRouter); 
+app.use("/", crmRouter);
+
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });

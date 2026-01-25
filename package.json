@@ -22,12 +22,14 @@
   "homepage": "https://github.com/bratttv/ai-medspa-receptionist#readme",
   "dependencies": {
     "@supabase/supabase-js": "^2.91.1",
+    "@types/node-cron": "^3.0.11",
     "cors": "^2.8.6",
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "googleapis": "^170.1.0",
+    "node-cron": "^4.2.1",
     "twilio": "^5.12.0"
   },
   "devDependencies": {

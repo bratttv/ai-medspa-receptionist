@@ -5,6 +5,7 @@ import bookRouter from "./routes/book";
 // 👇 1. Import the new router
 import inboundSmsRouter from "./routes/inbound-sms";
 import crmRouter from "./routes/crm"; 
+import cancelRouter from "./routes/cancel";
 
 dotenv.config();
 
@@ -22,6 +23,7 @@ app.use("/", bookRouter);
 // 👇 3. Mount the new router
 app.use("/", inboundSmsRouter); 
 app.use("/", crmRouter);
+app.use("/", cancelRouter);
 
 
 app.get("/health", (req, res) => {

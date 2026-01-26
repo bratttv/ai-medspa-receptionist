@@ -8,7 +8,7 @@ const router = Router();
 const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 // You can hardcode your number here for testing if you want
-const TEAM_PHONE = process.env.TEAM_PHONE || "+15555555555"; 
+const TEAM_PHONE = process.env.TEAM_PHONE || "+14374405408"; 
 
 router.post("/notify_team", async (req, res) => {
   console.log("🔔 NOTIFY TEAM REQUEST RECEIVED");

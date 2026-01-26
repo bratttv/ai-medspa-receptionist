@@ -2,16 +2,15 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 
-// IMPORT ALL ROUTES
 import bookRouter from "./routes/book";
 import inboundSmsRouter from "./routes/inbound-sms";
 import crmRouter from "./routes/crm";
 import cancelRouter from "./routes/cancel";
-import availabilityRouter from "./routes/availability"; 
+import availabilityRouter from "./routes/availability"; // 👈 CHECK THIS LINE
+import notifyRouter from "./routes/notify"; 
+import rescheduleRouter from "./routes/reschedule"; 
+
 import { startScheduler } from "./services/scheduler";
-import transferRouter from "./routes/transfer";
-import rescheduleRouter from "./routes/reschedule";
-import notifyRouter from "./routes/notify";
 
 dotenv.config();
 
@@ -22,15 +21,14 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// REGISTER ROUTES
+// 🔌 PLUG IN THE ROUTES
 app.use("/", bookRouter);
 app.use("/", inboundSmsRouter);
 app.use("/", crmRouter);
 app.use("/", cancelRouter);
-app.use("/", availabilityRouter); 
-app.use("/", transferRouter);
-app.use("/", rescheduleRouter);
+app.use("/", availabilityRouter); // 👈 AND THIS LINE
 app.use("/", notifyRouter);
+app.use("/", rescheduleRouter);
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });

@@ -1,21 +1,27 @@
 import { Router } from "express";
 import { supabase } from "../services/supabase.service";
 import { sendConfirmationSMS } from "../services/sms.service";
+import Twilio from "twilio";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const router = Router();
+const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const TEAM_PHONE = process.env.TEAM_PHONE || "+14374405408"; // Your cell number
 
 router.post("/book", async (req, res) => {
   console.log("--- BOOKING REQUEST RECEIVED ---");
 
   try {
     // 1. ROBUST ARGUMENT EXTRACTION
-    // Handles both "old" Vapi (functionCall) and "new" Vapi (toolCalls)
     let args = req.body.message.functionCall?.parameters;
     if (!args && req.body.message.toolCalls) {
-      args = JSON.parse(req.body.message.toolCalls[0].function.arguments);
+      // Handle the "double parse" issue safely
+      const rawArgs = req.body.message.toolCalls[0].function.arguments;
+      args = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
     }
     
-    // Safety check: if Vapi sent nothing
     if (!args) {
       console.log("No arguments found.");
       return res.status(200).send("");
@@ -28,7 +34,7 @@ router.post("/book", async (req, res) => {
     const clientPhone = args.phone || args.client_phone || "";
     const clientEmail = args.email || args.client_email || "";
     
-    // Handle Date/Time (Accepts "dateTime" combined OR "date" + "time" separate)
+    // Handle Date/Time logic
     let startTimeStr = args.dateTime; 
     if (!startTimeStr && args.date && args.time) {
       startTimeStr = `${args.date} ${args.time}`;
@@ -41,7 +47,7 @@ router.post("/book", async (req, res) => {
       return res.json({ results: [{ result: "I didn't catch the date correctly. Could you repeat it?" }] });
     }
 
-    // 3. SAVE TO SUPABASE (No Google Calendar!)
+    // 3. SAVE TO SUPABASE
     const { error: dbError } = await supabase
       .from('appointments')
       .insert([
@@ -52,7 +58,6 @@ router.post("/book", async (req, res) => {
           service_type: serviceType,
           start_time: start.toISOString(),
           status: 'confirmed'
-          // Removed google_event_id
         }
       ]);
 
@@ -61,13 +66,27 @@ router.post("/book", async (req, res) => {
       throw new Error("Database save failed");
     }
 
-    // 4. SEND SMS
+    // 4. SEND SMS TO CLIENT (The Confirmation)
     if (clientPhone) {
-      console.log("Sending SMS...");
+      console.log("Sending Confirmation SMS to Client...");
       await sendConfirmationSMS(clientPhone, clientName, start.toISOString(), serviceType);
     }
 
-    // 5. SUCCESS RESPONSE
+    // 5. 🔔 SEND SMS TO TEAM (You!)
+    try {
+        const teamMsg = `✅ NEW BOOKING: ${clientName} booked ${serviceType} for ${start.toLocaleString()} (Phone: ${clientPhone})`;
+        
+        await client.messages.create({
+            body: teamMsg,
+            from: process.env.TWILIO_PHONE_NUMBER,
+            to: TEAM_PHONE,
+        });
+        console.log("Team Notification Sent.");
+    } catch (teamSmsError) {
+        console.error("Failed to alert team (Booking still successful):", teamSmsError);
+    }
+
+    // 6. SUCCESS RESPONSE TO VAPI
     return res.json({
       results: [{
         result: `Success. I have booked ${serviceType} for ${clientName} on ${start.toLocaleString()}.`

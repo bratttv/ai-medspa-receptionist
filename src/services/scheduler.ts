@@ -1,76 +1,82 @@
-import cron from "node-cron";
-import { supabase } from "./supabase.service";
-import twilio from "twilio";
-import dotenv from "dotenv";
+import cron from 'node-cron';
+import { supabase } from './supabase.service';
+import Twilio from 'twilio';
+import dotenv from 'dotenv';
+import { addHours, subMinutes, addMinutes } from 'date-fns';
 
 dotenv.config();
-const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-// 🅿️ PARKING & INSURANCE INFO
-const PARKING_MSG = "🚗 PARKING: Free validation in the Green Garage (Level P2).";
-const REVIEW_LINK = "https://g.page/r/YourBusiness/review"; // Replace with your Google Review link
+const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-export function startScheduler() {
-  console.log("⏰ Cron Scheduler Started: Checking for reminders/reviews every 10 mins...");
+// 👇 CUSTOMIZE YOUR MESSAGE HERE
+const PARKING_INFO = "Free parking is available at the back of the building.";
+const ADDRESS = "123 Main St, Suite 100";
 
-  // Run every 10 minutes
-  cron.schedule("*/10 * * * *", async () => {
-    await sendReminders();
-    await sendReviewLinks();
-  });
-}
+export const startScheduler = () => {
+  console.log("⏰ Scheduler started: Checking for reminders every hour.");
 
-// 1️⃣ 24-HOUR REMINDERS
-async function sendReminders() {
-  const now = new Date();
-  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-  const tomorrowBuffer = new Date(tomorrow.getTime() + 20 * 60 * 1000); // 20 min window
+  // Check every hour at minute 0
+  cron.schedule('0 * * * *', async () => {
+    console.log("⏰ Running hourly reminder check...");
 
-  // Find appts roughly 24hrs from now that haven't been reminded
-  const { data: upcoming } = await supabase
-    .from('appointments')
-    .select('*')
-    .eq('reminder_sent', false)
-    .neq('status', 'cancelled')
-    .gte('start_time', tomorrow.toISOString())
-    .lte('start_time', tomorrowBuffer.toISOString());
+    const now = new Date();
+    // Look for appointments happening 23.5 to 24.5 hours from now
+    const windowStart = addHours(subMinutes(now, 30), 24);
+    const windowEnd = addHours(addMinutes(now, 30), 24);
 
-  if (upcoming && upcoming.length > 0) {
-    for (const appt of upcoming) {
-      const msg = `Hi ${appt.client_name}, reminder for your ${appt.service_type} tomorrow at ${new Date(appt.start_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}.\n\n${PARKING_MSG}\n\nSee you soon!`;
-      
-      try {
-        await client.messages.create({ body: msg, from: process.env.TWILIO_PHONE_NUMBER, to: appt.client_phone });
-        // Mark as sent so we don't text them again
-        await supabase.from('appointments').update({ reminder_sent: true }).eq('id', appt.id);
+    try {
+      // 1. Find appointments
+      const { data: upcomingAppts, error } = await supabase
+        .from('appointments')
+        .select('*')
+        .eq('status', 'confirmed')
+        .is('reminder_sent', false)
+        .gte('start_time', windowStart.toISOString())
+        .lte('start_time', windowEnd.toISOString());
+
+      if (error) {
+        console.error("Supabase check failed:", error);
+        return;
+      }
+
+      if (!upcomingAppts || upcomingAppts.length === 0) {
+        console.log("No reminders to send this hour.");
+        return;
+      }
+
+      console.log(`Found ${upcomingAppts.length} appointments needing reminders.`);
+
+      // 2. Text them
+      for (const appt of upcomingAppts) {
+        if (!appt.client_phone) continue;
+
+        // 💌 THE CUSTOM MESSAGE
+        const timeString = new Date(appt.start_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        
+        const msg = `Hi ${appt.client_name}, quick reminder for your appointment tomorrow at ${timeString}. 
+        
+📍 Location: ${ADDRESS}
+🚗 Note: ${PARKING_INFO}
+        
+See you then!`;
+        
+        await client.messages.create({
+          body: msg,
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: appt.client_phone
+        });
+
         console.log(`✅ Reminder sent to ${appt.client_name}`);
-      } catch (e) { console.error("Failed to send reminder:", e); }
+
+        // 3. Mark as sent
+        await supabase
+          .from('appointments')
+          .update({ reminder_sent: true })
+          .eq('id', appt.id);
+      }
+
+    } catch (err) {
+      console.error("❌ Scheduler Error:", err);
     }
-  }
-}
-
-// 2️⃣ POST-APPOINTMENT REVIEWS (2 Hours After)
-async function sendReviewLinks() {
-  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
-  const buffer = new Date(twoHoursAgo.getTime() - 20 * 60 * 1000); // Look back 20 mins
-
-  const { data: finished } = await supabase
-    .from('appointments')
-    .select('*')
-    .eq('review_sent', false)
-    .neq('status', 'cancelled')
-    .lte('start_time', twoHoursAgo.toISOString()) // Started > 2 hrs ago
-    .gte('start_time', buffer.toISOString());
-
-  if (finished && finished.length > 0) {
-    for (const appt of finished) {
-      const msg = `Hi ${appt.client_name}, thanks for visiting Lumen! How did we do?\n\n⭐⭐⭐⭐⭐ leave a review here: ${REVIEW_LINK}`;
-      
-      try {
-        await client.messages.create({ body: msg, from: process.env.TWILIO_PHONE_NUMBER, to: appt.client_phone });
-        await supabase.from('appointments').update({ review_sent: true }).eq('id', appt.id);
-        console.log(`⭐ Review link sent to ${appt.client_name}`);
-      } catch (e) { console.error("Failed to send review link:", e); }
-    }
-  }
-}
+  });
+};

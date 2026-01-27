@@ -1,106 +1,114 @@
 import { Router } from "express";
 import { supabase } from "../services/supabase.service";
-import { sendConfirmationSMS } from "../services/sms.service";
-import Twilio from "twilio";
-import dotenv from "dotenv";
-
-dotenv.config();
+import { addMinutes, addDays, setHours, setMinutes, isBefore } from "date-fns";
 
 const router = Router();
-const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-const TEAM_PHONE = process.env.TEAM_PHONE || "+14374405408"; // Your cell number
 
-router.post("/book", async (req, res) => {
-  console.log("--- BOOKING REQUEST RECEIVED ---");
+// ⚙️ TORONTO HOURS (in UTC)
+// Toronto is UTC-5. So 9 AM EST is 14:00 UTC.
+const BUSINESS_START_HOUR = 14; // 9 AM EST
+const BUSINESS_END_HOUR = 23;   // 6 PM EST
+const SLOT_DURATION = 60;      
+const LOOKAHEAD_DAYS = 7;     
 
+function overlaps(startA: Date, endA: Date, startB: Date, endB: Date) {
+  return startA < endB && startB < endA;
+}
+
+router.post("/check_availability", async (req, res) => {
   try {
-    // 1. ROBUST ARGUMENT EXTRACTION
-    let args = req.body.message.functionCall?.parameters;
-    if (!args && req.body.message.toolCalls) {
-      // Handle the "double parse" issue safely
-      const rawArgs = req.body.message.toolCalls[0].function.arguments;
-      args = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
+    const toolCallId = req.body.message.toolCalls?.[0]?.id;
+
+    let params = {};
+    const rawArgs = req.body.message.functionCall?.parameters || req.body.message.toolCalls?.[0]?.function?.arguments;
+    if (rawArgs) {
+        params = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
     }
     
-    if (!args) {
-      console.log("No arguments found.");
-      return res.status(200).send("");
-    }
+    const { date, time } = params as any || {};
 
-    console.log("Arguments:", args);
+    const now = new Date();
+    const endSearch = addDays(now, LOOKAHEAD_DAYS);
 
-    const clientName = args.name || args.client_name || "Valued Client";
-    const serviceType = args.service || args.service_type || "Consultation";
-    const clientPhone = args.phone || args.client_phone || "";
-    const clientEmail = args.email || args.client_email || "";
-    
-    // Handle Date/Time logic
-    let startTimeStr = args.dateTime; 
-    if (!startTimeStr && args.date && args.time) {
-      startTimeStr = `${args.date} ${args.time}`;
-    }
-
-    // 2. CREATE TIMESTAMP
-    const start = new Date(startTimeStr);
-    if (isNaN(start.getTime())) {
-      console.error("Invalid Date:", startTimeStr);
-      return res.json({ results: [{ result: "I didn't catch the date correctly. Could you repeat it?" }] });
-    }
-
-    // 3. SAVE TO SUPABASE
-    const { error: dbError } = await supabase
+    const { data: busyData } = await supabase
       .from('appointments')
-      .insert([
-        { 
-          client_name: clientName,
-          client_email: clientEmail,
-          client_phone: clientPhone,
-          service_type: serviceType,
-          start_time: start.toISOString(),
-          status: 'confirmed'
+      .select('start_time')
+      .neq('status', 'cancelled')
+      .gte('start_time', now.toISOString())
+      .lte('start_time', endSearch.toISOString());
+
+    const busyRanges = (busyData || []).map(appt => ({
+      start: new Date(appt.start_time),
+      end: addMinutes(new Date(appt.start_time), SLOT_DURATION)
+    }));
+
+    let resultText = "";
+
+    if (date && time) {
+      // User asked for a specific time
+      const requestedStart = new Date(`${date} ${time}`);
+      // If Vapi sends local time, we might need to assume it's UTC for now or handle timezone parsing
+      // For now, we trust Vapi sends an ISO string or we treat it as UTC
+      
+      const checkStart = new Date(requestedStart.getTime() + 1000); 
+      const checkEnd = addMinutes(requestedStart, SLOT_DURATION - 1);
+      const isTaken = busyRanges.some(busy => overlaps(checkStart, checkEnd, busy.start, busy.end));
+      
+      resultText = isTaken ? "That time is unavailable." : "That time is available.";
+    } else {
+      // FIND SLOTS
+      const availableSlots: string[] = [];
+      for (let i = 0; i < LOOKAHEAD_DAYS; i++) {
+        const currentDay = addDays(now, i);
+        // Set hours in UTC
+        let slotTime = setHours(setMinutes(currentDay, 0), BUSINESS_START_HOUR);
+        const endOfDay = setHours(setMinutes(currentDay, 0), BUSINESS_END_HOUR);
+
+        while (isBefore(slotTime, endOfDay)) {
+          const slotEnd = addMinutes(slotTime, SLOT_DURATION);
+
+          if (slotTime > now) {
+            const isConflict = busyRanges.some(busy => 
+              overlaps(slotTime, slotEnd, busy.start, busy.end)
+            );
+            if (!isConflict) {
+              // Convert back to readable Toronto time for the Voice Response
+              // We simulate -5 hours for display
+              const localHour = slotTime.getUTCHours() - 5;
+              const displayHour = localHour > 12 ? localHour - 12 : localHour;
+              const ampm = localHour >= 12 ? "PM" : "AM";
+              
+              availableSlots.push(
+                `${slotTime.toLocaleString("en-US", { weekday: "long" })} at ${displayHour}:00 ${ampm}`
+              );
+            }
+          }
+          if (availableSlots.length >= 3) break;
+          slotTime = addMinutes(slotTime, SLOT_DURATION);
         }
-      ]);
-
-    if (dbError) {
-      console.error("Supabase Error:", dbError);
-      throw new Error("Database save failed");
+        if (availableSlots.length >= 3) break;
+      }
+      resultText = availableSlots.length > 0 
+        ? `The next openings are: ${availableSlots.join(", ")}.`
+        : "I'm sorry, we are fully booked for the next 7 days.";
     }
 
-    // 4. SEND SMS TO CLIENT (The Confirmation)
-    if (clientPhone) {
-      console.log("Sending Confirmation SMS to Client...");
-      await sendConfirmationSMS(clientPhone, clientName, start.toISOString(), serviceType);
-    }
-
-    // 5. 🔔 SEND SMS TO TEAM (You!)
-    try {
-        const teamMsg = `✅ NEW BOOKING: ${clientName} booked ${serviceType} for ${start.toLocaleString()} (Phone: ${clientPhone})`;
-        
-        await client.messages.create({
-            body: teamMsg,
-            from: process.env.TWILIO_PHONE_NUMBER,
-            to: TEAM_PHONE,
-        });
-        console.log("Team Notification Sent.");
-    } catch (teamSmsError) {
-        console.error("Failed to alert team (Booking still successful):", teamSmsError);
-    }
-
-    // 6. SUCCESS RESPONSE TO VAPI
     return res.json({
       results: [{
-        result: `Success. I have booked ${serviceType} for ${clientName} on ${start.toLocaleString()}.`
+        toolCallId: toolCallId,
+        result: resultText
       }]
     });
 
-  } catch (err) {
-    console.error("Booking Error:", err);
-    return res.json({
-      results: [{
-        result: "I had a technical issue finalizing that booking. Please try again."
-      }]
+  } catch (error) {
+    console.error("Availability Error:", error);
+    return res.json({ 
+        results: [{ 
+            toolCallId: req.body.message?.toolCalls?.[0]?.id,
+            result: "I'm having trouble accessing the calendar." 
+        }] 
     });
   }
 });
 
-export default router;  
+export default router;

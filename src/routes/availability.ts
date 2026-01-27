@@ -4,11 +4,15 @@ import { addMinutes, addDays, setHours, setMinutes, isBefore } from "date-fns";
 
 const router = Router();
 
-// ⚙️ CONFIGURATION
-const BUSINESS_START_HOUR = 9; // 9 AM
-const BUSINESS_END_HOUR = 17;  // 5 PM
-const SLOT_DURATION = 60;      // Minutes per appointment
-const LOOKAHEAD_DAYS = 7;      // How far to look
+// ⚙️ TORONTO BUSINESS HOURS (Converted to UTC)
+// Toronto is UTC-5.
+// We want 9 AM EST to 6 PM EST.
+// 9 AM EST = 14:00 UTC
+// 6 PM EST = 23:00 UTC
+const BUSINESS_START_HOUR_UTC = 14; 
+const BUSINESS_END_HOUR_UTC = 23;   
+const SLOT_DURATION = 60;      
+const LOOKAHEAD_DAYS = 7;     
 
 // Helper: Check overlap
 function overlaps(startA: Date, endA: Date, startB: Date, endB: Date) {
@@ -17,21 +21,17 @@ function overlaps(startA: Date, endA: Date, startB: Date, endB: Date) {
 
 router.post("/check_availability", async (req, res) => {
   try {
-    // 1. CAPTURE THE TOOL ID (Critical for Vapi)
     const toolCallId = req.body.message.toolCalls?.[0]?.id;
 
-    // 2. Get parameters
+    // 1. Parse Arguments
     let params = {};
     const rawArgs = req.body.message.functionCall?.parameters || req.body.message.toolCalls?.[0]?.function?.arguments;
-    
     if (rawArgs) {
         params = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
     }
-    
     const { date, time } = params as any || {};
-    console.log(`Checking availability... Date: ${date}, Time: ${time}`);
 
-    // 3. Fetch busy slots from Database
+    // 2. Fetch Busy Slots
     const now = new Date();
     const endSearch = addDays(now, LOOKAHEAD_DAYS);
 
@@ -47,25 +47,42 @@ router.post("/check_availability", async (req, res) => {
       end: addMinutes(new Date(appt.start_time), SLOT_DURATION)
     }));
 
-    // 4. LOGIC: Check Specific Time OR Find Next Slots
     let resultText = "";
 
+    // 3. LOGIC A: Check Specific Time
     if (date && time) {
-      // User asked for a specific time
-      const requestedStart = new Date(`${date} ${time}`);
+      // 🛡️ FOOLPROOF TIMEZONE FIX 🛡️
+      // We explicitly append "-05:00" (EST) to the date string.
+      // This tells the server: "This user is in Toronto, not London."
+      const isoString = `${date}T${time}:00-05:00`; 
+      const requestedStart = new Date(isoString);
+      
       const checkStart = new Date(requestedStart.getTime() + 1000); 
       const checkEnd = addMinutes(requestedStart, SLOT_DURATION - 1);
 
       const isTaken = busyRanges.some(busy => overlaps(checkStart, checkEnd, busy.start, busy.end));
       
-      resultText = isTaken ? "That time is unavailable." : "That time is available.";
+      // Double check business hours (in UTC terms)
+      const hourUTC = requestedStart.getUTCHours();
+      const isWithinHours = hourUTC >= BUSINESS_START_HOUR_UTC && hourUTC < BUSINESS_END_HOUR_UTC;
+
+      if (!isWithinHours) {
+         resultText = "That time is outside of our business hours (9 AM to 6 PM).";
+      } else if (isTaken) {
+         resultText = "That time is unavailable.";
+      } else {
+         resultText = "That time is available.";
+      }
+
     } else {
-      // User asked "When are you free?" -> Find slots
+      // 4. LOGIC B: Find Open Slots
       const availableSlots: string[] = [];
+      
       for (let i = 0; i < LOOKAHEAD_DAYS; i++) {
         const currentDay = addDays(now, i);
-        let slotTime = setHours(setMinutes(currentDay, 0), BUSINESS_START_HOUR);
-        const endOfDay = setHours(setMinutes(currentDay, 0), BUSINESS_END_HOUR);
+        // Start checking at 14:00 UTC (9 AM EST)
+        let slotTime = setHours(setMinutes(currentDay, 0), BUSINESS_START_HOUR_UTC);
+        const endOfDay = setHours(setMinutes(currentDay, 0), BUSINESS_END_HOUR_UTC);
 
         while (isBefore(slotTime, endOfDay)) {
           const slotEnd = addMinutes(slotTime, SLOT_DURATION);
@@ -74,9 +91,16 @@ router.post("/check_availability", async (req, res) => {
             const isConflict = busyRanges.some(busy => 
               overlaps(slotTime, slotEnd, busy.start, busy.end)
             );
+            
             if (!isConflict) {
+              // Convert UTC back to Readable Toronto Time for the AI to speak
+              // UTC Hour - 5 = Toronto Hour
+              const localHour = slotTime.getUTCHours() - 5;
+              const displayHour = localHour > 12 ? localHour - 12 : localHour;
+              const ampm = localHour >= 12 ? "PM" : "AM";
+              
               availableSlots.push(
-                slotTime.toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" })
+                `${slotTime.toLocaleString("en-US", { weekday: "long" })} at ${displayHour}:00 ${ampm}`
               );
             }
           }
@@ -90,10 +114,9 @@ router.post("/check_availability", async (req, res) => {
         : "I'm sorry, we are fully booked for the next 7 days.";
     }
 
-    // 5. SEND RESPONSE WITH ID (The Fix)
     return res.json({
       results: [{
-        toolCallId: toolCallId, // 👈 THIS IS WHAT WAS MISSING
+        toolCallId: toolCallId,
         result: resultText
       }]
     });
@@ -102,7 +125,6 @@ router.post("/check_availability", async (req, res) => {
     console.error("Availability Error:", error);
     return res.json({ 
         results: [{ 
-            // Even on error, we try to send the ID back so Vapi speaks the error
             toolCallId: req.body.message?.toolCalls?.[0]?.id,
             result: "I'm having trouble accessing the calendar." 
         }] 

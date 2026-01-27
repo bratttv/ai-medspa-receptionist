@@ -12,7 +12,6 @@ const TIMEZONE = "America/New_York"; // Toronto Time
 
 // Helper to get slots for a specific date
 async function getSlotsForDate(dateStr: string) {
-    // 1. Fetch Appointments (Strict Toronto 24h Window)
     const { data: appointments, error } = await supabase
         .from('appointments')
         .select('start_time, end_time')
@@ -67,34 +66,33 @@ router.post("/check_availability", async (req, res) => {
     if (rawArgs) params = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
     
     let { date } = params as any;
-    // Default to Today if missing
     if (!date) date = new Date().toLocaleDateString("en-CA", { timeZone: TIMEZONE });
 
     console.log(`🔎 Checking Date: ${date}`);
 
-    // 2. Check the Requested Date
+    // 2. Check Requested Date
     let slots = await getSlotsForDate(date);
     let message = "";
 
-    // 3. THE SMART LOGIC (Auto-Switch to Tomorrow) 🧠
+    // 3. SMART LOGIC (Auto-Switch) 🧠
     if (slots.length > 0) {
+        // Normal success case
         message = `I have openings on ${date} at: ${slots.join(", ")}.`;
     } else {
-        // If today is empty/past, automatically check TOMORROW
+        // Today is full/past -> Check Tomorrow
         console.log("⚠️ Today is full/past. Auto-checking tomorrow...");
         
-        // Calculate Tomorrow's Date
         const todayObj = new Date(date);
         const tomorrowObj = addDays(todayObj, 1);
-        const tomorrowStr = format(tomorrowObj, 'yyyy-MM-dd'); // Requires date-fns format
+        const tomorrowStr = format(tomorrowObj, 'yyyy-MM-dd');
 
-        // Check Tomorrow
         const tomorrowSlots = await getSlotsForDate(tomorrowStr);
 
         if (tomorrowSlots.length > 0) {
-            message = `I am fully booked for today (${date}), but I have openings tomorrow (${tomorrowStr}) at: ${tomorrowSlots.join(", ")}.`;
+            // 👈 YOUR NEW CUSTOM MESSAGE IS HERE
+            message = `We can't get you in today, but I have openings tomorrow at: ${tomorrowSlots.join(", ")}.`;
         } else {
-            message = `I am fully booked on ${date} and ${tomorrowStr}. Please choose another date.`;
+            message = `I am fully booked for the next two days. Please choose another date.`;
         }
     }
 

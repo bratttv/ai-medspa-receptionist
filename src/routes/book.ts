@@ -3,7 +3,6 @@ import { supabase } from "../services/supabase.service";
 
 const router = Router();
 
-// 🚨 CRITICAL: The route path must be "/book_appointment"
 router.post("/book_appointment", async (req, res) => {
   try {
     console.log("--- BOOKING REQUEST RECEIVED ---");
@@ -15,7 +14,6 @@ router.post("/book_appointment", async (req, res) => {
         params = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
     }
     
-    console.log("Arguments:", params);
     const { name, email, phone, service, dateTime } = params as any;
 
     // 2. Validate
@@ -23,14 +21,19 @@ router.post("/book_appointment", async (req, res) => {
         throw new Error("Missing required fields: name, phone, or dateTime.");
     }
 
-    // 3. Save to Supabase
-    // We force 'service' into both columns to prevent the "Not Null" crash
+    // 3. CALCULATE END TIME (The Fix)
+    // We automatically set the appointment length to 60 minutes
+    const startDate = new Date(dateTime);
+    const endDate = new Date(startDate.getTime() + 60 * 60 * 1000); // Add 1 Hour
+
+    // 4. Save to Supabase
     const { data, error } = await supabase.from('appointments').insert([
       {
         client_name: name,
         client_email: email || "",
         client_phone: phone,
         start_time: dateTime,
+        end_time: endDate.toISOString(), // 👈 THIS WAS MISSING
         status: 'confirmed',
         service: service || 'General Checkup',      
         service_type: service || 'General Checkup', 
@@ -45,7 +48,7 @@ router.post("/book_appointment", async (req, res) => {
 
     console.log("✅ Booking Successful:", data);
 
-    // 4. Return Success
+    // 5. Return Success
     return res.json({
         results: [{
             toolCallId: req.body.message.toolCalls?.[0]?.id,

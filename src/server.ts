@@ -36,6 +36,11 @@ app.get("/health", (req, res) => {
 
 startScheduler();
 
+// 👋 The "Welcome" Route (Silences the root 404s)
+app.get("/", (req, res) => {
+  res.send("<h1>🤖 AI Receptionist Server is Online</h1>");
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

@@ -8,26 +8,23 @@ dotenv.config();
 const router = Router();
 const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-// ✅ ROUTE: Matches your curl command (/reschedule)
+// ✅ Matched to your working Curl route
 router.post("/reschedule", async (req, res) => {
   try {
     console.log("--- RESCHEDULE REQUEST RECEIVED ---");
 
     const toolCallId = req.body.message.toolCalls?.[0]?.id;
 
-    // 1. 🛡️ PARSING FIX: Handle Vapi's complex JSON format
+    // 1. Parse Params
     let params = {};
     const rawArgs = req.body.message.functionCall?.parameters || req.body.message.toolCalls?.[0]?.function?.arguments;
     if (rawArgs) {
-        // If Vapi sends a stringified JSON, we parse it. If it's already an object, we use it.
         params = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
     }
     
-    console.log("Parsed Params:", params); // This will show us the phone number in logs
     const { phone, newDate, newTime } = params as any;
 
     if (!phone) {
-        console.error("❌ Error: Phone number is missing from request.");
         return res.json({ 
             results: [{ 
                 toolCallId: toolCallId,
@@ -36,19 +33,23 @@ router.post("/reschedule", async (req, res) => {
         });
     }
 
-    // 2. Prepare New Times (Toronto Time)
+    // 2. Prepare New Times
     const isoString = `${newDate}T${newTime}:00-05:00`;
     const newStart = new Date(isoString);
-    const newEnd = new Date(newStart.getTime() + 60 * 60 * 1000); // Add 1 Hour
+    const newEnd = new Date(newStart.getTime() + 60 * 60 * 1000);
 
-    // 3. Find the Appointment
+    // 3. Find the Appointment (FUZZY SEARCH FIX) 🔍
+    // We strip non-digits to get the core number, then search for it.
+    const cleanPhone = phone.replace(/\D/g, ''); // Removes +, -, spaces
+    const searchPattern = `%${cleanPhone}%`;     // Matches "...1437..." or "...437..."
+
     const now = new Date();
     const { data: existingAppts, error: findError } = await supabase
         .from('appointments')
         .select('*')
-        .eq('client_phone', phone)
+        .ilike('client_phone', searchPattern) // 👈 CHANGED from .eq() to .ilike()
         .neq('status', 'cancelled')
-        .gte('start_time', now.toISOString()) // Only future appointments
+        .gte('start_time', now.toISOString())
         .order('start_time', { ascending: true })
         .limit(1);
 
@@ -63,6 +64,7 @@ router.post("/reschedule", async (req, res) => {
     }
 
     const appointmentId = existingAppts[0].id;
+    console.log(`✅ Found Appointment ID: ${appointmentId}`);
 
     // 4. Update Database
     const { error: updateError } = await supabase
@@ -78,8 +80,6 @@ router.post("/reschedule", async (req, res) => {
         throw new Error(`Database update failed: ${updateError.message}`);
     }
 
-    console.log("✅ Reschedule Successful in DB");
-
     // 5. Send SMS Confirmation
     try {
         const readableDate = newStart.toLocaleString("en-US", {
@@ -94,9 +94,9 @@ router.post("/reschedule", async (req, res) => {
         await client.messages.create({
             body: `Reschedule Confirmed: Your appointment has been moved to ${readableDate}. See you then!`,
             from: process.env.TWILIO_PHONE_NUMBER,
-            to: phone
+            to: existingAppts[0].client_phone // Use the DB phone number to be safe
         });
-        console.log("✅ SMS Sent to:", phone);
+        console.log("✅ SMS Sent");
     } catch (smsError) {
         console.error("⚠️ SMS Failed:", smsError);
     }
@@ -105,7 +105,7 @@ router.post("/reschedule", async (req, res) => {
     return res.json({
         results: [{
             toolCallId: toolCallId,
-            result: `I have successfully moved your appointment to ${newDate} at ${newTime}. You will receive a text confirmation shortly.`
+            result: `I have successfully moved your appointment to ${newDate} at ${newTime}.`
         }]
     });
 
@@ -114,7 +114,7 @@ router.post("/reschedule", async (req, res) => {
     return res.json({
         results: [{
             toolCallId: req.body.message.toolCalls?.[0]?.id,
-            result: `I had trouble rescheduling the appointment. ${error.message}`
+            result: `Error: ${error.message}`
         }]
     });
   }

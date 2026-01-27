@@ -3,57 +3,66 @@ import Twilio from "twilio";
 import dotenv from "dotenv";
 
 dotenv.config();
-
 const router = Router();
+
+// Ensure these exist, or it crashes silently
+if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
+    console.error("❌ FATAL: Twilio Credentials are MISSING.");
+}
+
 const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-// You can hardcode your number here for testing if you want
-const TEAM_PHONE = process.env.TEAM_PHONE || "+14374405408"; 
-
 router.post("/notify_team", async (req, res) => {
-  console.log("🔔 NOTIFY TEAM REQUEST RECEIVED");
-  
   try {
-    let args;
+    console.log("🔔 NOTIFY TEAM REQUEST RECEIVED");
 
-    // 🛡️ SAFE PARSING LOGIC (Fixes the crash)
-    if (req.body.message.functionCall?.parameters) {
-      args = req.body.message.functionCall.parameters;
-    } else if (req.body.message.toolCalls) {
-      const rawArgs = req.body.message.toolCalls[0].function.arguments;
-      
-      // CHECK: Is it already an object?
-      if (typeof rawArgs === 'object') {
-        args = rawArgs; // Use it directly
-      } else {
-        args = JSON.parse(rawArgs); // It's a string, so parse it
-      }
+    // 1. GET THE ID (The Missing Piece)
+    const toolCallId = req.body.message.toolCalls?.[0]?.id;
+
+    let params = {};
+    const rawArgs = req.body.message.toolCalls?.[0]?.function?.arguments || req.body.message.functionCall?.parameters;
+    if (rawArgs) {
+        params = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
     }
 
-    const reason = args?.reason || "General Inquiry";
-    const customerPhone = args?.phone || "Unknown Number";
-    const customerName = args?.name || "Unknown Client";
+    const { name, phone, date, time } = params as any;
 
-    const messageBody = `🚨 TEAM ALERT: Please call back ${customerName} at ${customerPhone}. Reason: ${reason}`;
+    if (!phone) {
+      console.error("❌ Error: Phone number is missing.");
+      return res.json({ 
+        results: [{
+          toolCallId: toolCallId,
+          result: "Failed: Phone number is required."
+        }]
+      });
+    }
+
+    console.log(`Sending SMS to ${phone}...`);
     
-    console.log(`Sending SMS to ${TEAM_PHONE}...`);
-
     await client.messages.create({
-      body: messageBody,
+      body: `New Booking: ${name} on ${date} at ${time}`,
       from: process.env.TWILIO_PHONE_NUMBER,
-      to: TEAM_PHONE,
+      to: phone,
     });
 
-    return res.json({
+    console.log(`✅ SMS SENT!`);
+    
+    // 2. RETURN THE ID (Vapi will now be happy)
+    return res.json({ 
       results: [{
-        result: "I have messaged the team. They will contact you shortly."
+        toolCallId: toolCallId,
+        result: "Notification sent successfully."
       }]
     });
 
-  } catch (error) {
-    console.error("Notify Error:", error);
-    // Return a safe response so the call doesn't drop
-    return res.json({ results: [{ result: "I have noted your request." }] });
+  } catch (error: any) {
+    console.error("❌ TWILIO ERROR:", error.message);
+    return res.json({ 
+      results: [{
+        toolCallId: req.body.message?.toolCalls?.[0]?.id,
+        result: `Error sending SMS: ${error.message}`
+      }]
+    });
   }
 });
 

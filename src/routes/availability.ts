@@ -17,7 +17,10 @@ function overlaps(startA: Date, endA: Date, startB: Date, endB: Date) {
 
 router.post("/check_availability", async (req, res) => {
   try {
-    // 1. Get parameters (Safe Parse for Vapi)
+    // 1. CAPTURE THE TOOL ID (Critical for Vapi)
+    const toolCallId = req.body.message.toolCalls?.[0]?.id;
+
+    // 2. Get parameters
     let params = {};
     const rawArgs = req.body.message.functionCall?.parameters || req.body.message.toolCalls?.[0]?.function?.arguments;
     
@@ -28,7 +31,7 @@ router.post("/check_availability", async (req, res) => {
     const { date, time } = params as any || {};
     console.log(`Checking availability... Date: ${date}, Time: ${time}`);
 
-    // 2. Fetch busy slots
+    // 3. Fetch busy slots from Database
     const now = new Date();
     const endSearch = addDays(now, LOOKAHEAD_DAYS);
 
@@ -44,55 +47,66 @@ router.post("/check_availability", async (req, res) => {
       end: addMinutes(new Date(appt.start_time), SLOT_DURATION)
     }));
 
-    // 3. IF USER REQUESTED A TIME
+    // 4. LOGIC: Check Specific Time OR Find Next Slots
+    let resultText = "";
+
     if (date && time) {
+      // User asked for a specific time
       const requestedStart = new Date(`${date} ${time}`);
       const checkStart = new Date(requestedStart.getTime() + 1000); 
       const checkEnd = addMinutes(requestedStart, SLOT_DURATION - 1);
 
       const isTaken = busyRanges.some(busy => overlaps(checkStart, checkEnd, busy.start, busy.end));
+      
+      resultText = isTaken ? "That time is unavailable." : "That time is available.";
+    } else {
+      // User asked "When are you free?" -> Find slots
+      const availableSlots: string[] = [];
+      for (let i = 0; i < LOOKAHEAD_DAYS; i++) {
+        const currentDay = addDays(now, i);
+        let slotTime = setHours(setMinutes(currentDay, 0), BUSINESS_START_HOUR);
+        const endOfDay = setHours(setMinutes(currentDay, 0), BUSINESS_END_HOUR);
 
-      if (!isTaken) {
-        return res.json({ results: [{ result: "That time is available." }] });
-      }
-      console.log("Requested time is busy. Finding alternatives...");
-    }
+        while (isBefore(slotTime, endOfDay)) {
+          const slotEnd = addMinutes(slotTime, SLOT_DURATION);
 
-    // 4. FIND OPEN SLOTS
-    const availableSlots: string[] = [];
-    for (let i = 0; i < LOOKAHEAD_DAYS; i++) {
-      const currentDay = addDays(now, i);
-      let slotTime = setHours(setMinutes(currentDay, 0), BUSINESS_START_HOUR);
-      const endOfDay = setHours(setMinutes(currentDay, 0), BUSINESS_END_HOUR);
-
-      while (isBefore(slotTime, endOfDay)) {
-        const slotEnd = addMinutes(slotTime, SLOT_DURATION);
-
-        if (slotTime > now) {
-          const isConflict = busyRanges.some(busy => 
-            overlaps(slotTime, slotEnd, busy.start, busy.end)
-          );
-          if (!isConflict) {
-            availableSlots.push(
-              slotTime.toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" })
+          if (slotTime > now) {
+            const isConflict = busyRanges.some(busy => 
+              overlaps(slotTime, slotEnd, busy.start, busy.end)
             );
+            if (!isConflict) {
+              availableSlots.push(
+                slotTime.toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" })
+              );
+            }
           }
+          if (availableSlots.length >= 3) break;
+          slotTime = addMinutes(slotTime, SLOT_DURATION);
         }
         if (availableSlots.length >= 3) break;
-        slotTime = addMinutes(slotTime, SLOT_DURATION);
       }
-      if (availableSlots.length >= 3) break;
+      resultText = availableSlots.length > 0 
+        ? `The next openings are: ${availableSlots.join(", ")}.`
+        : "I'm sorry, we are fully booked for the next 7 days.";
     }
 
-    const suggestionText = availableSlots.length > 0 
-      ? `That time is unavailable. The next openings are: ${availableSlots.join(", ")}.`
-      : "I'm sorry, we are fully booked for the next 7 days.";
-
-    return res.json({ results: [{ result: suggestionText }] });
+    // 5. SEND RESPONSE WITH ID (The Fix)
+    return res.json({
+      results: [{
+        toolCallId: toolCallId, // 👈 THIS IS WHAT WAS MISSING
+        result: resultText
+      }]
+    });
 
   } catch (error) {
     console.error("Availability Error:", error);
-    return res.json({ results: [{ result: "I'm having trouble accessing the calendar." }] });
+    return res.json({ 
+        results: [{ 
+            // Even on error, we try to send the ID back so Vapi speaks the error
+            toolCallId: req.body.message?.toolCalls?.[0]?.id,
+            result: "I'm having trouble accessing the calendar." 
+        }] 
+    });
   }
 });
 

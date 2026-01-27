@@ -7,11 +7,12 @@ const router = Router();
 // 🔧 CONFIGURATION
 const OPEN_HOUR = 9;   // 9 AM
 const CLOSE_HOUR = 17; // 5 PM
-const SLOT_DURATION = 60; // 👈 Set to 60 for 1-hour slots (or 30 for half-hour)
+const SLOT_DURATION = 60; // 60 Minutes (Change to 30 if you want half-hour slots)
+const TIMEZONE = "America/New_York"; // Toronto Time
 
 router.post("/check_availability", async (req, res) => {
   try {
-    console.log("--- AVAILABILITY CHECK (TORONTO FORCED) ---");
+    console.log("--- PREMIUM AVAILABILITY CHECK ---");
 
     const toolCallId = req.body.message.toolCalls?.[0]?.id;
 
@@ -24,13 +25,14 @@ router.post("/check_availability", async (req, res) => {
     
     let { date } = params as any;
     if (!date) {
-        // Default to Today (Toronto Date)
-        date = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+        // Default to "Today" in Toronto
+        date = new Date().toLocaleDateString("en-CA", { timeZone: TIMEZONE });
     }
 
     console.log(`🔎 Checking Date: ${date}`);
 
-    // 2. Fetch Appointments (Toronto 24h Window)
+    // 2. Fetch Appointments (Strict Toronto 24h Window)
+    // The -05:00 ensures we look at the correct day in your database
     const { data: appointments, error } = await supabase
         .from('appointments')
         .select('start_time, end_time')
@@ -40,35 +42,37 @@ router.post("/check_availability", async (req, res) => {
 
     if (error) throw new Error(error.message);
 
-    // 3. Generate Slots (FORCE TORONTO OFFSET) 🇨🇦
+    // 3. Generate Slots
     const availableSlots = [];
     
-    // We construct the ISO string WITH the timezone offset (-05:00)
-    // This tells the UTC server: "This is 9 AM in Toronto, which is 2 PM for you."
+    // 🛑 CRITICAL: Start at 9:00 AM Toronto Time
+    // We explicitly add "-05:00" so the server knows exactly when to start.
     let currentSlot = new Date(`${date}T${OPEN_HOUR.toString().padStart(2, '0')}:00:00-05:00`);
+    
+    // Stop at 5:00 PM Toronto Time
     const closeTime = new Date(`${date}T${CLOSE_HOUR.toString().padStart(2, '0')}:00:00-05:00`);
 
-    // Loop through the day
+    // Loop until we hit closing time
     while (currentSlot < closeTime) {
         
-        const slotStart = currentSlot;
-        const slotEnd = addMinutes(slotStart, SLOT_DURATION);
+        const slotEnd = addMinutes(currentSlot, SLOT_DURATION);
 
-        // A. Collision Detection
+        // A. Collision Detection (Does it overlap with DB?)
         const isBlocked = appointments?.some(appt => {
-            const apptStart = new Date(appt.start_time); // DB is already ISO
+            const apptStart = new Date(appt.start_time);
             const apptEnd = new Date(appt.end_time);
-            return (slotStart < apptEnd && slotEnd > apptStart);
+            // Overlap Formula
+            return (currentSlot < apptEnd && slotEnd > apptStart);
         });
 
-        // B. Past Time Check (Is this slot in the past?)
-        const now = new Date(); // Current UTC time
-        const isPast = isBefore(slotStart, now);
+        // B. Past Time Check (Don't show 9 AM if it is now 2 PM)
+        const now = new Date();
+        const isPast = isBefore(currentSlot, now);
 
         if (!isBlocked && !isPast) {
-            // C. Formatting (Clean "9:00 AM")
-            const prettyTime = slotStart.toLocaleTimeString("en-US", {
-                timeZone: "America/New_York",
+            // C. Pretty Format ("9:00 AM")
+            const prettyTime = currentSlot.toLocaleTimeString("en-US", {
+                timeZone: TIMEZONE,
                 hour: 'numeric',
                 minute: '2-digit',
                 hour12: true
@@ -76,13 +80,13 @@ router.post("/check_availability", async (req, res) => {
             availableSlots.push(prettyTime);
         }
 
-        // Next Slot
+        // Move to next slot
         currentSlot = addMinutes(currentSlot, SLOT_DURATION);
     }
 
     console.log(`✅ Slots Found: ${availableSlots.length}`);
 
-    // 4. Return
+    // 4. Return to Vapi
     return res.json({
         results: [{
             toolCallId: toolCallId,

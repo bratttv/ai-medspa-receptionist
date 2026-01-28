@@ -7,59 +7,56 @@ router.post("/lookup_client", async (req, res) => {
   try {
     console.log("--- CLIENT LOOKUP ---");
 
-    const toolCallId = req.body.message.toolCalls?.[0]?.id;
+    // 1. Get the Raw Number
     let params = {};
     const rawArgs = req.body.message.functionCall?.parameters || req.body.message.toolCalls?.[0]?.function?.arguments;
     if (rawArgs) params = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
-
+    
     const { phone } = params as any;
+    
+    // 2. CLEAN THE NUMBER (The Fix)
+    // Remove everything that isn't a number. Remove leading '1' if present.
+    // This makes "+1 (437)..." match "437..."
+    const cleanPhone = phone.replace(/\D/g, '').replace(/^1/, ''); 
 
-    if (!phone) {
-        return res.json({
-            results: [{
-                toolCallId: toolCallId,
-                result: "No phone number provided."
-            }]
-        });
-    }
+    console.log(`🔎 Searching for: ${cleanPhone} (Raw: ${phone})`);
 
-    console.log(`🔎 Looking up: ${phone}`);
-
-    // Check DB for the most recent appointment for this phone number
+    // 3. FUZZY SEARCH
+    // We search for phone numbers that *contain* these last 10 digits
     const { data, error } = await supabase
         .from('appointments')
-        .select('client_name, service')
-        .eq('client_phone', phone)
+        .select('*')
+        .ilike('client_phone', `%${cleanPhone}%`) // Find partial match
         .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+        .limit(1);
 
-    if (error || !data) {
-        // New Client (Not found)
-        console.log("👤 Unknown Client");
+    if (error) throw error;
+
+    if (data && data.length > 0) {
+        const client = data[0];
+        console.log(`👤 Found: ${client.client_name}`);
         return res.json({
             results: [{
-                toolCallId: toolCallId,
+                toolCallId: req.body.message.toolCalls?.[0]?.id,
+                result: `found_client: ${client.client_name} (Last service: ${client.service})`
+            }]
+        });
+    } else {
+        console.log("👤 New Client");
+        return res.json({
+            results: [{
+                toolCallId: req.body.message.toolCalls?.[0]?.id,
                 result: "new_client"
             }]
         });
     }
 
-    // Returning Client (Found)
-    console.log(`👤 Found: ${data.client_name}`);
-    return res.json({
-        results: [{
-            toolCallId: toolCallId,
-            result: `found_client: ${data.client_name}`
-        }]
-    });
-
   } catch (error: any) {
-    console.error("Lookup Error:", error);
+    console.error("Lookup Error:", error.message);
     return res.json({
         results: [{
             toolCallId: req.body.message.toolCalls?.[0]?.id,
-            result: "error"
+            result: "error_looking_up_client"
         }]
     });
   }

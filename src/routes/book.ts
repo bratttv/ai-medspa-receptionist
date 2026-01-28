@@ -12,15 +12,21 @@ const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TO
 // Google Calendar Setup
 const calendar = google.calendar({ version: "v3" });
 
-// 🛡️ SAFELY LOAD THE KEY
-const privateKey = process.env.GOOGLE_PRIVATE_KEY
-  ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n')
+// 1. LOAD THE KEYS (Using GC_ names from your screenshot)
+// We define them here so we can use them later
+const rawKey = process.env.GC_PRIVATE_KEY || process.env.GOOGLE_PRIVATE_KEY;
+const clientEmail = process.env.GC_CLIENT_EMAIL || process.env.GOOGLE_CLIENT_EMAIL;
+const calendarId = process.env.GC_CALENDAR_ID || process.env.GOOGLE_CALENDAR_ID || 'primary'; // 👈 THIS WAS MISSING!
+
+// 2. FIX NEWLINES
+const privateKey = rawKey
+  ? rawKey.replace(/\\n/g, '\n')
   : undefined;
 
-// ☢️ NUCLEAR FIX: We treat JWT 'as any' so TypeScript stops complaining about arguments
+// 3. AUTHENTICATION (The "Nuclear Fix" for TypeScript)
 const JWT = google.auth.JWT as any;
 const auth = new JWT(
-    process.env.GOOGLE_CLIENT_EMAIL,
+    clientEmail,
     undefined,
     privateKey,
     ['https://www.googleapis.com/auth/calendar']
@@ -30,7 +36,7 @@ router.post("/book_appointment", async (req, res) => {
   try {
     console.log("--- BOOKING REQUEST ---");
     
-    // 1. Parse Params
+    // Parse Params
     let params = {};
     const rawArgs = req.body.message.functionCall?.parameters || req.body.message.toolCalls?.[0]?.function?.arguments;
     if (rawArgs) params = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
@@ -40,18 +46,18 @@ router.post("/book_appointment", async (req, res) => {
     if (!dateTime && date && time) dateTime = `${date}T${time}:00`; 
     if (!name || !phone || !dateTime) throw new Error("Missing required fields.");
 
-    // 2. Times (Force Toronto)
+    // Times (Force Toronto)
     const cleanDateStr = dateTime.includes("T") ? dateTime : `${dateTime}T09:00:00`; 
     const startDate = new Date(cleanDateStr); 
     const endDate = new Date(startDate.getTime() + 60 * 60 * 1000); // 1 Hour
 
     console.log(`📝 Booking: ${name} @ ${startDate.toLocaleString()}`);
 
-    // 3. GOOGLE CALENDAR SYNC 📅
+    // GOOGLE CALENDAR SYNC 📅
     try {
         await calendar.events.insert({
             auth: auth,
-            calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary',
+            calendarId: calendarId, // 👈 Now this works because we defined it at the top
             requestBody: {
                 summary: `💆‍♀️ ${name} - ${service || 'MedSpa Service'}`,
                 description: `Phone: ${phone}\nEmail: ${email}\nBooked via AI Lumina`,
@@ -64,7 +70,7 @@ router.post("/book_appointment", async (req, res) => {
         console.error("⚠️ Google Calendar Failed:", gError.message);
     }
 
-    // 4. Save to Supabase
+    // Save to Supabase
     const { error } = await supabase.from('appointments').insert([{
         client_name: name,
         client_email: email || "",
@@ -79,7 +85,7 @@ router.post("/book_appointment", async (req, res) => {
 
     if (error) throw new Error(`Database save failed: ${error.message}`);
 
-    // 5. SMS Confirmation (Client)
+    // SMS Confirmation
     const readableDate = startDate.toLocaleString("en-US", {
         timeZone: "America/New_York",
         weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit"
@@ -94,7 +100,7 @@ router.post("/book_appointment", async (req, res) => {
         console.log("✅ Client SMS Sent");
     } catch (e) { console.error("SMS Error:", e); }
 
-    // 6. Team SMS
+    // Team SMS
     if (process.env.TEAM_PHONE) {
         try {
             await client.messages.create({

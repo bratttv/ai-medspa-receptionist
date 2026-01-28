@@ -9,28 +9,32 @@ dotenv.config();
 const router = Router();
 const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-// Google Calendar Setup
-const calendar = google.calendar({ version: "v3" });
-
-// 1. LOAD THE KEYS (Using GC_ names from your screenshot)
-// We define them here so we can use them later
+// 1. LOAD VARIABLES
 const rawKey = process.env.GC_PRIVATE_KEY || process.env.GOOGLE_PRIVATE_KEY;
 const clientEmail = process.env.GC_CLIENT_EMAIL || process.env.GOOGLE_CLIENT_EMAIL;
-const calendarId = process.env.GC_CALENDAR_ID || process.env.GOOGLE_CALENDAR_ID || 'primary'; // 👈 THIS WAS MISSING!
+const calendarId = process.env.GC_CALENDAR_ID || process.env.GOOGLE_CALENDAR_ID || 'primary';
 
-// 2. FIX NEWLINES
-const privateKey = rawKey
-  ? rawKey.replace(/\\n/g, '\n')
-  : undefined;
+// 2. CREDENTIAL INSPECTOR (Debugs the "Invisible Key" issue) 🕵️
+console.log("--- GOOGLE AUTH DEBUG ---");
+console.log(`📧 Email Present: ${!!clientEmail} (${clientEmail ? clientEmail.substring(0, 5) + '...' : 'MISSING'})`);
+console.log(`🔑 Key Present: ${!!rawKey} (Length: ${rawKey ? rawKey.length : 0})`);
 
-// 3. AUTHENTICATION (The "Nuclear Fix" for TypeScript)
-const JWT = google.auth.JWT as any;
-const auth = new JWT(
-    clientEmail,
-    undefined,
-    privateKey,
-    ['https://www.googleapis.com/auth/calendar']
-);
+// 3. CLEAN THE KEY
+// If the key contains literal "\n" characters (common in Render), replace them with real newlines.
+const privateKey = rawKey ? rawKey.replace(/\\n/g, '\n') : undefined;
+
+// 4. MODERN AUTH SETUP (Robuster than JWT) 🛡️
+// We create the auth client once.
+const auth = new google.auth.GoogleAuth({
+    credentials: {
+        client_email: clientEmail,
+        private_key: privateKey,
+    },
+    scopes: ['https://www.googleapis.com/auth/calendar'],
+});
+
+// Create the Calendar Client with the Auth baked in
+const calendar = google.calendar({ version: "v3", auth });
 
 router.post("/book_appointment", async (req, res) => {
   try {
@@ -56,8 +60,7 @@ router.post("/book_appointment", async (req, res) => {
     // GOOGLE CALENDAR SYNC 📅
     try {
         await calendar.events.insert({
-            auth: auth,
-            calendarId: calendarId, // 👈 Now this works because we defined it at the top
+            calendarId: calendarId, 
             requestBody: {
                 summary: `💆‍♀️ ${name} - ${service || 'MedSpa Service'}`,
                 description: `Phone: ${phone}\nEmail: ${email}\nBooked via AI Lumina`,
@@ -68,6 +71,10 @@ router.post("/book_appointment", async (req, res) => {
         console.log("✅ Added to Google Calendar");
     } catch (gError: any) {
         console.error("⚠️ Google Calendar Failed:", gError.message);
+        // Hint for specific errors
+        if (gError.message.includes("Missing required authentication")) {
+            console.error("💡 ERROR HINT: The Private Key is empty or formatted wrong.");
+        }
     }
 
     // Save to Supabase

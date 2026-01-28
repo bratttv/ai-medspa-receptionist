@@ -1,49 +1,66 @@
 import { supabase } from "./supabase.service";
 import Twilio from "twilio";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-// Ensure you have your link set here
-const REVIEW_LINK = "https://g.page/r/YOUR_GOOGLE_LINK_HERE/review"; 
+
+// ⚠️ REPLACE THIS WITH YOUR REAL GOOGLE REVIEW LINK
+const REVIEW_LINK = "https://g.page/r/YOUR_LINK_HERE/review"; 
 
 export async function runScheduler() {
     console.log("Scheduler active...");
 
-    // 2. SEND REVIEW REQUESTS (2 Hours After)
-    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    try {
+        // 1. CALCULATE 24 HOURS AGO
+        // We look for appointments that ended BEFORE this timestamp.
+        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    const { data: pastAppointments, error } = await supabase
-        .from('appointments')
-        .select('*')
-        .eq('status', 'confirmed')
-        .eq('review_sent', false)
-        .lt('end_time', twoHoursAgo);
+        // 2. FIND ELIGIBLE APPOINTMENTS
+        // Status is confirmed + Ended > 24 hours ago + No link sent yet
+        const { data: pastAppointments, error } = await supabase
+            .from('appointments')
+            .select('*')
+            .eq('status', 'confirmed')
+            .eq('review_sent', false)
+            .lt('end_time', oneDayAgo); 
 
-    if (error) {
-        console.error("Scheduler Error:", error.message);
-        return;
-    }
-
-    if (pastAppointments && pastAppointments.length > 0) {
-        console.log(`Sending review links to ${pastAppointments.length} clients...`);
-
-        for (const appt of pastAppointments) {
-            try {
-                await client.messages.create({
-                    body: `Hello ${appt.client_name}, thank you for choosing Lumen Aesthetics. We would value your feedback on your experience: ${REVIEW_LINK}`,
-                    from: process.env.TWILIO_PHONE_NUMBER,
-                    to: appt.client_phone
-                });
-
-                await supabase
-                    .from('appointments')
-                    .update({ review_sent: true })
-                    .eq('id', appt.id);
-
-                console.log(`Review link sent to ${appt.client_name}`);
-
-            } catch (err) {
-                console.error(`Failed to send to ${appt.client_name}:`, err);
-            }
+        if (error) {
+            console.error("Scheduler Database Error:", error.message);
+            return;
         }
+
+        if (pastAppointments && pastAppointments.length > 0) {
+            console.log(`Sending review requests to ${pastAppointments.length} clients...`);
+
+            for (const appt of pastAppointments) {
+                try {
+                    // 3. SEND PROFESSIONAL SMS (No Emojis)
+                    await client.messages.create({
+                        body: `Hello ${appt.client_name}, thank you for choosing Lumen Aesthetics. We hope you are enjoying your results. We would value your feedback on your experience: ${REVIEW_LINK}`,
+                        from: process.env.TWILIO_PHONE_NUMBER,
+                        to: appt.client_phone
+                    });
+
+                    // 4. MARK AS SENT (Prevents Spam)
+                    await supabase
+                        .from('appointments')
+                        .update({ review_sent: true })
+                        .eq('id', appt.id);
+
+                    console.log(`Review link sent to ${appt.client_name}`);
+
+                } catch (smsError) {
+                    console.error(`Failed to send SMS to ${appt.client_name}:`, smsError);
+                }
+            }
+        } else {
+            // Silent log to keep terminal clean
+            // console.log("No review links to send right now.");
+        }
+
+    } catch (err: any) {
+        console.error("Scheduler Critical Failure:", err.message);
     }
 }

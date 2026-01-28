@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { supabase } from "../services/supabase.service";
 import Twilio from "twilio";
-import { google } from "googleapis"; // 👈 This line fails if you don't install!
+import { google } from "googleapis"; 
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -9,15 +9,17 @@ dotenv.config();
 const router = Router();
 const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-// Google Calendar Setup (With Crash Prevention)
+// Google Calendar Setup
 const calendar = google.calendar({ version: "v3" });
 
 // 🛡️ SAFELY LOAD THE KEY
 const privateKey = process.env.GOOGLE_PRIVATE_KEY
-  ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n')  // Fixes Render/Heroku newlines
+  ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n')
   : undefined;
 
-const auth = new google.auth.JWT(
+// ☢️ NUCLEAR FIX: We treat JWT 'as any' so TypeScript stops complaining about arguments
+const JWT = google.auth.JWT as any;
+const auth = new JWT(
     process.env.GOOGLE_CLIENT_EMAIL,
     undefined,
     privateKey,
@@ -49,7 +51,7 @@ router.post("/book_appointment", async (req, res) => {
     try {
         await calendar.events.insert({
             auth: auth,
-            calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary', // Use your real email in .env!
+            calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary',
             requestBody: {
                 summary: `💆‍♀️ ${name} - ${service || 'MedSpa Service'}`,
                 description: `Phone: ${phone}\nEmail: ${email}\nBooked via AI Lumina`,
@@ -60,7 +62,6 @@ router.post("/book_appointment", async (req, res) => {
         console.log("✅ Added to Google Calendar");
     } catch (gError: any) {
         console.error("⚠️ Google Calendar Failed:", gError.message);
-        // We do NOT crash here. We let the booking continue to DB/SMS.
     }
 
     // 4. Save to Supabase

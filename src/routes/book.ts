@@ -9,22 +9,26 @@ dotenv.config();
 const router = Router();
 const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-// 1. LOAD VARIABLES
+// --- 🔧 KEY CLEANER & LOADER ---
 const rawKey = process.env.GC_PRIVATE_KEY || process.env.GOOGLE_PRIVATE_KEY;
 const clientEmail = process.env.GC_CLIENT_EMAIL || process.env.GOOGLE_CLIENT_EMAIL;
 const calendarId = process.env.GC_CALENDAR_ID || process.env.GOOGLE_CALENDAR_ID || 'primary';
 
-// 2. CREDENTIAL INSPECTOR (Debugs the "Invisible Key" issue) 🕵️
-console.log("--- GOOGLE AUTH DEBUG ---");
-console.log(`📧 Email Present: ${!!clientEmail} (${clientEmail ? clientEmail.substring(0, 5) + '...' : 'MISSING'})`);
-console.log(`🔑 Key Present: ${!!rawKey} (Length: ${rawKey ? rawKey.length : 0})`);
+// Robust Key Cleaning (Fixes spaces, quotes, and newlines)
+let privateKey = rawKey;
+if (privateKey) {
+    if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+        privateKey = privateKey.slice(1, -1); // Remove surrounding quotes
+    }
+    privateKey = privateKey.replace(/\\n/g, '\n'); // Fix literal \n
+}
 
-// 3. CLEAN THE KEY
-// If the key contains literal "\n" characters (common in Render), replace them with real newlines.
-const privateKey = rawKey ? rawKey.replace(/\\n/g, '\n') : undefined;
+console.log("--- KEY DIAGNOSTICS ---");
+console.log(`📧 Email: ${clientEmail ? '✅ Loaded' : '❌ MISSING'}`);
+console.log(`🔑 Key: ${privateKey ? `✅ Loaded (${privateKey.length} chars)` : '❌ MISSING'}`);
+console.log(`📅 Cal ID: ${calendarId}`);
 
-// 4. MODERN AUTH SETUP (Robuster than JWT) 🛡️
-// We create the auth client once.
+// Google Auth Setup
 const auth = new google.auth.GoogleAuth({
     credentials: {
         client_email: clientEmail,
@@ -32,23 +36,40 @@ const auth = new google.auth.GoogleAuth({
     },
     scopes: ['https://www.googleapis.com/auth/calendar'],
 });
-
-// Create the Calendar Client with the Auth baked in
 const calendar = google.calendar({ version: "v3", auth });
+
 
 router.post("/book_appointment", async (req, res) => {
   try {
     console.log("--- BOOKING REQUEST ---");
-    
-    // Parse Params
+
+    // 🛡️ CRASH PREVENTION: Check inputs before using them
+    if (!req.body) {
+        throw new Error("Request body is empty. Did you forget 'Content-Type: application/json'?");
+    }
+    if (!req.body.message) {
+        throw new Error("Invalid format: 'message' field is missing from Vapi payload.");
+    }
+
+    // 1. Parse Params (Safely)
     let params = {};
-    const rawArgs = req.body.message.functionCall?.parameters || req.body.message.toolCalls?.[0]?.function?.arguments;
-    if (rawArgs) params = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
+    const functionCall = req.body.message.functionCall;
+    const toolCalls = req.body.message.toolCalls;
+
+    const rawArgs = functionCall?.parameters || toolCalls?.[0]?.function?.arguments;
+    
+    if (rawArgs) {
+        params = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
+    }
     
     let { name, email, phone, service, dateTime, date, time } = params as any;
 
+    // Handle Time Formatting
     if (!dateTime && date && time) dateTime = `${date}T${time}:00`; 
-    if (!name || !phone || !dateTime) throw new Error("Missing required fields.");
+    if (!name || !phone || !dateTime) {
+        console.warn("⚠️ Missing fields:", params);
+        throw new Error("Missing required fields (name, phone, or time).");
+    }
 
     // Times (Force Toronto)
     const cleanDateStr = dateTime.includes("T") ? dateTime : `${dateTime}T09:00:00`; 
@@ -57,10 +78,10 @@ router.post("/book_appointment", async (req, res) => {
 
     console.log(`📝 Booking: ${name} @ ${startDate.toLocaleString()}`);
 
-    // GOOGLE CALENDAR SYNC 📅
+    // 2. GOOGLE CALENDAR SYNC 📅
     try {
         await calendar.events.insert({
-            calendarId: calendarId, 
+            calendarId: calendarId,
             requestBody: {
                 summary: `💆‍♀️ ${name} - ${service || 'MedSpa Service'}`,
                 description: `Phone: ${phone}\nEmail: ${email}\nBooked via AI Lumina`,
@@ -71,13 +92,10 @@ router.post("/book_appointment", async (req, res) => {
         console.log("✅ Added to Google Calendar");
     } catch (gError: any) {
         console.error("⚠️ Google Calendar Failed:", gError.message);
-        // Hint for specific errors
-        if (gError.message.includes("Missing required authentication")) {
-            console.error("💡 ERROR HINT: The Private Key is empty or formatted wrong.");
-        }
+        // Don't throw here, let the booking continue
     }
 
-    // Save to Supabase
+    // 3. Save to Supabase
     const { error } = await supabase.from('appointments').insert([{
         client_name: name,
         client_email: email || "",
@@ -92,7 +110,7 @@ router.post("/book_appointment", async (req, res) => {
 
     if (error) throw new Error(`Database save failed: ${error.message}`);
 
-    // SMS Confirmation
+    // 4. SMS Confirmation
     const readableDate = startDate.toLocaleString("en-US", {
         timeZone: "America/New_York",
         weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit"
@@ -107,7 +125,7 @@ router.post("/book_appointment", async (req, res) => {
         console.log("✅ Client SMS Sent");
     } catch (e) { console.error("SMS Error:", e); }
 
-    // Team SMS
+    // 5. Team SMS
     if (process.env.TEAM_PHONE) {
         try {
             await client.messages.create({
@@ -126,10 +144,10 @@ router.post("/book_appointment", async (req, res) => {
     });
 
   } catch (error: any) {
-    console.error("Booking Error:", error);
+    console.error("Booking Error:", error.message);
     return res.json({
         results: [{
-            toolCallId: req.body.message.toolCalls?.[0]?.id,
+            toolCallId: req.body.message?.toolCalls?.[0]?.id || "unknown",
             result: `Error: ${error.message}`
         }]
     });

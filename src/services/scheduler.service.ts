@@ -17,7 +17,6 @@ export async function runScheduler() {
     // 1. PRE-APPOINTMENT REMINDERS (24 Hours Before) ⏰
     // ==========================================
     try {
-        // Look for appointments starting in the next 24 hours
         const twentyFourHoursFromNow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
         const { data: upcomingAppts, error: reminderError } = await supabase
@@ -33,16 +32,15 @@ export async function runScheduler() {
 
             for (const appt of upcomingAppts) {
                 try {
-                    // FIX: Create a professional date string (e.g., "Wed, Jan 28 at 10:00 AM")
-                    // This prevents the "Tomorrow" bug if the appointment is actually today.
                     const readableDate = new Date(appt.start_time).toLocaleString("en-US", {
                         timeZone: "America/New_York",
                         weekday: "short", month: "short", day: "numeric", 
                         hour: "numeric", minute: "2-digit"
                     });
 
+                    // ✨ UPDATED MESSAGE: No "Reply C". Passive Confirmation.
                     await client.messages.create({
-                        body: `Reminder: You have an appointment with Lumen Aesthetics on ${readableDate}. \n\nPlease arrive 5 minutes early. \nReply 'C' to Confirm.`,
+                        body: `Reminder: You have an appointment with Lumen Aesthetics on ${readableDate}. \n\nWe look forward to seeing you. Please call us if you need to reschedule or cancel.`,
                         from: process.env.TWILIO_PHONE_NUMBER,
                         to: appt.client_phone
                     });

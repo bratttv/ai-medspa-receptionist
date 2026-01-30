@@ -5,44 +5,55 @@ const router = Router();
 
 router.post("/lookup_client", async (req, res) => {
   try {
-    console.log("--- CLIENT LOOKUP ---");
+    console.log("--- NUCLEAR CLIENT LOOKUP ---");
 
-    // 1. Get the Raw Number
+    // 1. Get the Raw Number from AI
     let params = {};
     const rawArgs = req.body.message.functionCall?.parameters || req.body.message.toolCalls?.[0]?.function?.arguments;
     if (rawArgs) params = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
     
     const { phone } = params as any;
     
-    // 2. CLEAN THE NUMBER (The Fix)
-    // Remove everything that isn't a number. Remove leading '1' if present.
-    // This makes "+1 (437)..." match "437..."
-    const cleanPhone = phone.replace(/\D/g, '').replace(/^1/, ''); 
+    // 2. CLEAN THE INPUT (Remove +1, dashes, spaces)
+    // Input: "+1 (437) 555-0199" -> "4375550199"
+    const searchPhone = phone.replace(/\D/g, '').replace(/^1/, ''); 
+    console.log(`🔎 Scrubbed Input: ${searchPhone}`);
 
-    console.log(`🔎 Searching for: ${cleanPhone} (Raw: ${phone})`);
-
-    // 3. FUZZY SEARCH
-    // We search for phone numbers that *contain* these last 10 digits
-    const { data, error } = await supabase
+    // 3. FETCH RECENT CLIENTS (The Nuclear Strategy)
+    // We fetch the last 1000 appointments to ensure we catch them
+    const { data: recentClients, error } = await supabase
         .from('appointments')
         .select('*')
-        .ilike('client_phone', `%${cleanPhone}%`) // Find partial match
         .order('created_at', { ascending: false })
-        .limit(1);
+        .limit(1000);
 
     if (error) throw error;
 
-    if (data && data.length > 0) {
-        const client = data[0];
-        console.log(`👤 Found: ${client.client_name}`);
+    // 4. MANUAL MATCHING
+    // We loop through DB results and clean them one by one to compare
+    let foundClient = null;
+
+    if (recentClients) {
+        foundClient = recentClients.find(client => {
+            if (!client.client_phone) return false;
+            // Clean the DB number exactly like we cleaned the input
+            const dbPhoneClean = client.client_phone.replace(/\D/g, '').replace(/^1/, '');
+            
+            // Check if they match
+            return dbPhoneClean === searchPhone || dbPhoneClean.includes(searchPhone) || searchPhone.includes(dbPhoneClean);
+        });
+    }
+
+    if (foundClient) {
+        console.log(`✅ MATCH FOUND: ${foundClient.client_name}`);
         return res.json({
             results: [{
                 toolCallId: req.body.message.toolCalls?.[0]?.id,
-                result: `found_client: ${client.client_name} (Last service: ${client.service})`
+                result: `found_client: ${foundClient.client_name} (Last service: ${foundClient.service})`
             }]
         });
     } else {
-        console.log("👤 New Client");
+        console.log("❌ No match found after scrubbing.");
         return res.json({
             results: [{
                 toolCallId: req.body.message.toolCalls?.[0]?.id,

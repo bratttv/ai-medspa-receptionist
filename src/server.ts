@@ -1,6 +1,7 @@
-import express from "express";
-import cors from "cors";
 import dotenv from "dotenv";
+dotenv.config();
+import cors from "cors";
+import express from "express";
 
 // --- ROUTES ---
 import bookRouter from "./routes/book";
@@ -55,10 +56,11 @@ app.listen(PORT, () => {
   console.log("⏰ Premium Scheduler Starting...");
   runScheduler(); // Run once immediately
   
-  // Run again every 1 Hour
-  setInterval(() => {
-    runScheduler();
-  }, 60 * 60 * 1000); 
+  // Check every 60 seconds
+setInterval(() => {
+  console.log("⏰ Fast Scheduler Pulse (1m)...");
+  runScheduler();
+}, 60 * 1000);
 });
 
 export default app;

@@ -2,8 +2,8 @@ import { Router } from "express";
 import { supabase } from "../services/supabase.service";
 import Twilio from "twilio";
 import { google } from "googleapis"; 
-import { format } from "date-fns"; // Standard formatting
-import { toZonedTime } from "date-fns-tz"; // Timezone handling
+import { format } from "date-fns";
+import { toZonedTime, fromZonedTime } from "date-fns-tz";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -12,7 +12,7 @@ const router = Router();
 const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 // --- CONFIGURATION ---
-const TIMEZONE = "America/Toronto"; // 🇨🇦 Locked to Toronto
+const TIMEZONE = "America/Toronto";
 
 // --- GOOGLE CALENDAR SETUP ---
 const rawKey = process.env.GC_PRIVATE_KEY || process.env.GOOGLE_PRIVATE_KEY;
@@ -31,6 +31,32 @@ const auth = new google.auth.GoogleAuth({
 });
 const calendar = google.calendar({ version: "v3", auth });
 
+// ✅ Helper: Convert 12-hour time to 24-hour format
+function convertTo24Hour(timeStr: string): string {
+    if (!timeStr) return "";
+    
+    // Already in 24-hour format (e.g., "14:00" or "09:30")
+    if (/^\d{1,2}:\d{2}$/.test(timeStr) && !timeStr.toLowerCase().includes('am') && !timeStr.toLowerCase().includes('pm')) {
+        const [hours, mins] = timeStr.split(':');
+        return `${hours.padStart(2, '0')}:${mins}`;
+    }
+    
+    // 12-hour format (e.g., "2:00 PM", "10:30 AM")
+    const match = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?$/i);
+    if (!match) return timeStr; // Return as-is if can't parse
+    
+    let [, hours, mins, period] = match;
+    let h = parseInt(hours, 10);
+    
+    if (period) {
+        const isPM = period.toUpperCase() === 'PM';
+        if (isPM && h !== 12) h += 12;
+        if (!isPM && h === 12) h = 0;
+    }
+    
+    return `${h.toString().padStart(2, '0')}:${mins}`;
+}
+
 router.post("/book_appointment", async (req, res) => {
   try {
     console.log("--- BOOKING REQUEST ---");
@@ -40,30 +66,38 @@ router.post("/book_appointment", async (req, res) => {
     const rawArgs = req.body.message.functionCall?.parameters || req.body.message.toolCalls?.[0]?.function?.arguments;
     if (rawArgs) params = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
     
-    // We only care about these 4 things.
-    let { name, email, phone, service, dateTime } = params as any;
+    // ✅ Accept BOTH formats: (dateTime) OR (date + time)
+    let { name, email, phone, service, dateTime, date, time } = params as any;
 
-    // 2. VALIDATION (The "Name at Start" check)
-    // If the AI calls this tool without a name, we reject it here.
+    // 2. VALIDATION
     if (!name) throw new Error("I need the client's name to book.");
     if (!phone) throw new Error("I need the client's phone number to book.");
-    if (!dateTime) throw new Error("I need a valid ISO date and time (YYYY-MM-DDTHH:mm:ss).");
 
-    // 3. DATE FIX (The "October" Fix)
-    // We treat the input as a strict ISO string. No guessing.
-    const appointmentDate = new Date(dateTime);
+    // 3. DATE/TIME HANDLING - Support both formats
+    let appointmentDate: Date;
+
+    if (dateTime) {
+        // Format 1: Combined dateTime (e.g., "2025-02-01T10:00:00")
+        appointmentDate = new Date(dateTime);
+    } else if (date && time) {
+        // Format 2: Separate date + time (e.g., date="2025-02-01", time="10:00 AM")
+        const time24 = convertTo24Hour(time);
+        const isoString = `${date}T${time24}:00`;
+        appointmentDate = fromZonedTime(isoString, TIMEZONE);
+        console.log(`📅 Parsed: ${date} + ${time} → ${isoString} → ${appointmentDate.toISOString()}`);
+    } else {
+        throw new Error("I need a date and time for the appointment. Please provide date (YYYY-MM-DD) and time.");
+    }
 
     // Check if date is valid
     if (isNaN(appointmentDate.getTime())) {
-        throw new Error("Invalid Date Format. Please provide ISO-8601 (e.g., 2026-02-30T10:00:00).");
+        throw new Error("Invalid date/time format. Please use date as YYYY-MM-DD and time as HH:MM or H:MM AM/PM.");
     }
 
     // Calculate End Time (1 Hour Duration)
     const endDate = new Date(appointmentDate.getTime() + 60 * 60 * 1000);
 
-    // 4. FORMATTING (The "Full Date" Fix)
-    // We format it specifically for Toronto Timezone so it looks perfect in SMS.
-    // Result: "Tuesday, February 10th, 2026 at 2:00 PM"
+    // 4. FORMATTING for SMS
     const readableDate = format(toZonedTime(appointmentDate, TIMEZONE), "EEEE, MMMM do, yyyy 'at' h:mm a");
 
     console.log(`✅ Booking Confirmed: ${name} @ ${readableDate}`);
@@ -94,12 +128,12 @@ router.post("/book_appointment", async (req, res) => {
         status: 'confirmed',
         service: service || 'MedSpa Service',      
         reminder_sent: false,
-        review_sent: false // Ensure this is false so the review SMS doesn't fire immediately
+        review_sent: false
     }]);
 
     if (error) throw new Error(`Database Error: ${error.message}`);
 
-    // 7. CLIENT SMS (Premium & Professional)
+    // 7. CLIENT SMS
     try {
         await client.messages.create({
             body: `Lumen Aesthetics: Appointment Confirmed.\n\nDate: ${readableDate}\nService: ${service || 'Treatment'}\n\nParking: Free in Green Garage (Level P2).\nPlease bring valid ID.`,
@@ -129,7 +163,6 @@ router.post("/book_appointment", async (req, res) => {
 
   } catch (error: any) {
     console.error("Booking Logic Error:", error.message);
-    // Return the error to the AI so it knows to ask again
     return res.json({
         results: [{
             toolCallId: req.body.message?.toolCalls?.[0]?.id || "unknown",

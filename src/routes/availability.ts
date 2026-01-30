@@ -7,7 +7,7 @@ const router = Router();
 
 // 🔧 CONFIGURATION
 const OPEN_HOUR = 9;   // 9 AM
-const CLOSE_HOUR = 17; // 5 PM
+const CLOSE_HOUR = 19; // 7 PM ✅ FIXED (was 17)
 const SLOT_DURATION = 60; // 60 Minutes
 const TIMEZONE = "America/Toronto";
 
@@ -109,7 +109,6 @@ router.post("/check_availability", async (req, res) => {
         const tomorrowSlots = await getSlotsForDate(tomorrowStr);
 
         if (tomorrowSlots.length > 0) {
-            // 👈 YOUR NEW CUSTOM MESSAGE IS HERE
             message = `We can't get you in today, but I have openings tomorrow at: ${tomorrowSlots.join(", ")}.`;
         } else {
             message = `I am fully booked for the next two days. Please choose another date.`;

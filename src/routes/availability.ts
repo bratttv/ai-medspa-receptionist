@@ -12,12 +12,14 @@ const TIMEZONE = "America/New_York"; // Toronto Time
 
 // Helper to get slots for a specific date
 async function getSlotsForDate(dateStr: string) {
+    const queryFrom = `${dateStr}T00:00:00-05:00`;
+    const queryTo = `${dateStr}T23:59:59-05:00`;
     const { data: appointments, error } = await supabase
         .from('appointments')
         .select('start_time, end_time')
         .neq('status', 'cancelled')
-        .gte('start_time', `${dateStr}T00:00:00-05:00`)
-        .lte('start_time', `${dateStr}T23:59:59-05:00`);
+        .gte('start_time', queryFrom)
+        .lte('start_time', queryTo);
 
     if (error) throw new Error(error.message);
 
@@ -26,7 +28,6 @@ async function getSlotsForDate(dateStr: string) {
     // Start at 9:00 AM Toronto Time
     let currentSlot = new Date(`${dateStr}T${OPEN_HOUR.toString().padStart(2, '0')}:00:00-05:00`);
     const closeTime = new Date(`${dateStr}T${CLOSE_HOUR.toString().padStart(2, '0')}:00:00-05:00`);
-
     while (currentSlot < closeTime) {
         const slotEnd = addMinutes(currentSlot, SLOT_DURATION);
 
@@ -40,7 +41,6 @@ async function getSlotsForDate(dateStr: string) {
         // Past Time Check
         const now = new Date();
         const isPast = isBefore(currentSlot, now);
-
         if (!isBlocked && !isPast) {
             const prettyTime = currentSlot.toLocaleTimeString("en-US", {
                 timeZone: TIMEZONE,
@@ -85,7 +85,6 @@ router.post("/check_availability", async (req, res) => {
         const todayObj = new Date(date);
         const tomorrowObj = addDays(todayObj, 1);
         const tomorrowStr = format(tomorrowObj, 'yyyy-MM-dd');
-
         const tomorrowSlots = await getSlotsForDate(tomorrowStr);
 
         if (tomorrowSlots.length > 0) {

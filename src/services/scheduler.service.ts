@@ -1,10 +1,12 @@
 import { supabase } from "./supabase.service";
 import Twilio from "twilio";
 import dotenv from "dotenv";
+import { formatInTimeZone } from "date-fns-tz";
 
 dotenv.config();
 
 const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const TIMEZONE = "America/Toronto";
 
 // ⚠️ REPLACE WITH REAL GOOGLE LINK
 const REVIEW_LINK = "https://g.page/r/YOUR_LINK_HERE/review"; 
@@ -32,11 +34,11 @@ export async function runScheduler() {
 
             for (const appt of upcomingAppts) {
                 try {
-                    const readableDate = new Date(appt.start_time).toLocaleString("en-US", {
-                        timeZone: "America/New_York",
-                        weekday: "short", month: "short", day: "numeric", 
-                        hour: "numeric", minute: "2-digit"
-                    });
+                    const readableDate = formatInTimeZone(
+                        new Date(appt.start_time),
+                        TIMEZONE,
+                        "EEE, MMM d, h:mm a"
+                    );
 
                     // ✨ UPDATED MESSAGE: No "Reply C". Passive Confirmation.
                     await client.messages.create({
@@ -70,7 +72,7 @@ export async function runScheduler() {
         const { data: pastAppointments, error: reviewError } = await supabase
             .from('appointments')
             .select('*')
-            .eq('status', 'confirmed')
+            .eq('status', 'completed')
             .eq('review_sent', false)
             .lt('end_time', oneDayAgo); 
 
@@ -79,6 +81,9 @@ export async function runScheduler() {
 
             for (const appt of pastAppointments) {
                 try {
+                    if (appt.status !== 'completed') {
+                        continue;
+                    }
                     await client.messages.create({
                         body: `Hello ${appt.client_name}, thank you for choosing Lumen Aesthetics. We hope you are enjoying your results. We would value your feedback: ${REVIEW_LINK}`,
                         from: process.env.TWILIO_PHONE_NUMBER,

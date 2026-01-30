@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { supabase } from "../services/supabase.service";
-import { addMinutes, isBefore, addDays, format } from "date-fns";
+import { addMinutes, isBefore, addDays } from "date-fns";
+import { fromZonedTime, formatInTimeZone } from "date-fns-tz";
 
 const router = Router();
 
@@ -8,26 +9,30 @@ const router = Router();
 const OPEN_HOUR = 9;   // 9 AM
 const CLOSE_HOUR = 17; // 5 PM
 const SLOT_DURATION = 60; // 60 Minutes
-const TIMEZONE = "America/New_York"; // Toronto Time
+const TIMEZONE = "America/Toronto";
 
 // Helper to get slots for a specific date
 async function getSlotsForDate(dateStr: string) {
-    const queryFrom = `${dateStr}T00:00:00-05:00`;
-    const queryTo = `${dateStr}T23:59:59-05:00`;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        throw new Error("Invalid date format. Use YYYY-MM-DD.");
+    }
+
+    const dayStartUtc = fromZonedTime(`${dateStr}T00:00:00`, TIMEZONE);
+    const dayEndUtc = fromZonedTime(`${dateStr}T23:59:59`, TIMEZONE);
     const { data: appointments, error } = await supabase
         .from('appointments')
         .select('start_time, end_time')
         .neq('status', 'cancelled')
-        .gte('start_time', queryFrom)
-        .lte('start_time', queryTo);
+        .gte('start_time', dayStartUtc.toISOString())
+        .lte('start_time', dayEndUtc.toISOString());
 
     if (error) throw new Error(error.message);
 
     const availableSlots = [];
     
     // Start at 9:00 AM Toronto Time
-    let currentSlot = new Date(`${dateStr}T${OPEN_HOUR.toString().padStart(2, '0')}:00:00-05:00`);
-    const closeTime = new Date(`${dateStr}T${CLOSE_HOUR.toString().padStart(2, '0')}:00:00-05:00`);
+    let currentSlot = fromZonedTime(`${dateStr}T${OPEN_HOUR.toString().padStart(2, '0')}:00:00`, TIMEZONE);
+    const closeTime = fromZonedTime(`${dateStr}T${CLOSE_HOUR.toString().padStart(2, '0')}:00:00`, TIMEZONE);
     while (currentSlot < closeTime) {
         const slotEnd = addMinutes(currentSlot, SLOT_DURATION);
 
@@ -42,12 +47,7 @@ async function getSlotsForDate(dateStr: string) {
         const now = new Date();
         const isPast = isBefore(currentSlot, now);
         if (!isBlocked && !isPast) {
-            const prettyTime = currentSlot.toLocaleTimeString("en-US", {
-                timeZone: TIMEZONE,
-                hour: 'numeric',
-                minute: '2-digit',
-                hour12: true
-            });
+            const prettyTime = formatInTimeZone(currentSlot, TIMEZONE, "h:mm a");
             availableSlots.push(prettyTime);
         }
         currentSlot = addMinutes(currentSlot, SLOT_DURATION);
@@ -65,8 +65,29 @@ router.post("/check_availability", async (req, res) => {
     const rawArgs = req.body.message.functionCall?.parameters || req.body.message.toolCalls?.[0]?.function?.arguments;
     if (rawArgs) params = (typeof rawArgs === 'string') ? JSON.parse(rawArgs) : rawArgs;
     
-    let { date } = params as any;
+    let { date, startDateTime } = params as any;
+    if (!date && startDateTime) {
+        const startDate = new Date(startDateTime);
+        if (isNaN(startDate.getTime())) {
+            return res.json({
+                results: [{
+                    toolCallId: toolCallId,
+                    result: "Please provide a valid startDateTime (ISO 8601)."
+                }]
+            });
+        }
+        date = formatInTimeZone(startDate, TIMEZONE, "yyyy-MM-dd");
+    }
     if (!date) date = new Date().toLocaleDateString("en-CA", { timeZone: TIMEZONE });
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+        return res.json({
+            results: [{
+                toolCallId: toolCallId,
+                result: "Please provide the exact date in YYYY-MM-DD (e.g. 2026-02-01)."
+            }]
+        });
+    }
 
     console.log(`🔎 Checking Date: ${date}`);
 
@@ -82,9 +103,9 @@ router.post("/check_availability", async (req, res) => {
         // Today is full/past -> Check Tomorrow
         console.log("⚠️ Today is full/past. Auto-checking tomorrow...");
         
-        const todayObj = new Date(date);
+        const todayObj = fromZonedTime(`${date}T00:00:00`, TIMEZONE);
         const tomorrowObj = addDays(todayObj, 1);
-        const tomorrowStr = format(tomorrowObj, 'yyyy-MM-dd');
+        const tomorrowStr = formatInTimeZone(tomorrowObj, TIMEZONE, "yyyy-MM-dd");
         const tomorrowSlots = await getSlotsForDate(tomorrowStr);
 
         if (tomorrowSlots.length > 0) {

@@ -2,11 +2,13 @@ import { Router } from "express";
 import { supabase } from "../services/supabase.service";
 import Twilio from "twilio";
 import dotenv from "dotenv";
+import { fromZonedTime, formatInTimeZone } from "date-fns-tz";
 
 dotenv.config();
 
 const router = Router();
 const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const TIMEZONE = "America/Toronto";
 
 // ✅ Matched to your working Curl route
 router.post("/reschedule", async (req, res) => {
@@ -34,8 +36,25 @@ router.post("/reschedule", async (req, res) => {
     }
 
     // 2. Prepare New Times
-    const isoString = `${newDate}T${newTime}:00-05:00`;
-    const newStart = new Date(isoString);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(newDate || ""))) {
+        return res.json({
+            results: [{
+                toolCallId: toolCallId,
+                result: "Please provide the exact date in YYYY-MM-DD for rescheduling."
+            }]
+        });
+    }
+    if (!/^\d{2}:\d{2}$/.test(String(newTime || ""))) {
+        return res.json({
+            results: [{
+                toolCallId: toolCallId,
+                result: "Please provide the time in HH:MM (24-hour) for rescheduling."
+            }]
+        });
+    }
+
+    const isoString = `${newDate}T${newTime}:00`;
+    const newStart = fromZonedTime(isoString, TIMEZONE);
     const newEnd = new Date(newStart.getTime() + 60 * 60 * 1000);
 
     // 3. Find the Appointment (FUZZY SEARCH FIX) 🔍
@@ -82,14 +101,7 @@ router.post("/reschedule", async (req, res) => {
 
     // 5. Send SMS Confirmation
     try {
-        const readableDate = newStart.toLocaleString("en-US", {
-            timeZone: "America/New_York",
-            weekday: "long",
-            month: "short",
-            day: "numeric",
-            hour: "numeric",
-            minute: "2-digit"
-        });
+        const readableDate = formatInTimeZone(newStart, TIMEZONE, "EEEE, MMM d, h:mm a");
 
         await client.messages.create({
             body: `Reschedule Confirmed: Your appointment has been moved to ${readableDate}. See you then!`,

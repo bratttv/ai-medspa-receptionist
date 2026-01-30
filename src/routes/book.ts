@@ -2,6 +2,7 @@ import { Router } from "express";
 import { supabase } from "../services/supabase.service";
 import Twilio from "twilio";
 import { google } from "googleapis"; 
+import { fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -13,6 +14,7 @@ const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TO
 const rawKey = process.env.GC_PRIVATE_KEY || process.env.GOOGLE_PRIVATE_KEY;
 const clientEmail = process.env.GC_CLIENT_EMAIL || process.env.GOOGLE_CLIENT_EMAIL;
 const calendarId = process.env.GC_CALENDAR_ID || process.env.GOOGLE_CALENDAR_ID || 'primary';
+const TIMEZONE = "America/Toronto";
 
 let privateKey = rawKey;
 if (privateKey) {
@@ -38,22 +40,50 @@ router.post("/book_appointment", async (req, res) => {
     
     let { name, email, phone, service, dateTime, date, time } = params as any;
 
+    if (!name) {
+        throw new Error("Please provide your full name to book the appointment.");
+    }
+    if (!phone) {
+        throw new Error("Please provide a phone number to book the appointment.");
+    }
+
     if (!dateTime && date && time) dateTime = `${date}T${time}`; 
-    if (!name || !phone || !dateTime) throw new Error("Missing required fields.");
+    if (!dateTime) {
+        throw new Error("Please provide the exact date in YYYY-MM-DD and a time.");
+    }
+
+    const dateTimeStr = typeof dateTime === "string" ? dateTime : "";
+    const dateStr = typeof date === "string" ? date : "";
+    const hasWeekday = /(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today)/i.test(dateTimeStr) ||
+        /(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today)/i.test(dateStr);
+    const hasExplicitDate = /^\d{4}-\d{2}-\d{2}/.test(dateTimeStr) || /^\d{4}-\d{2}-\d{2}$/.test(dateStr);
+
+    if (hasWeekday && !hasExplicitDate) {
+        throw new Error("Please confirm the exact date in YYYY-MM-DD (e.g. 2026-02-01).");
+    }
+    if (!hasExplicitDate) {
+        throw new Error("Please provide the exact date in YYYY-MM-DD (e.g. 2026-02-01).");
+    }
 
     // TIMEZONE LOGIC (Toronto Fixed)
-    let timeString = dateTime;
+    let timeString = dateTimeStr;
     if (timeString.toLowerCase().includes("pm") || timeString.toLowerCase().includes("am")) {
        timeString = timeString.replace(/ ?[ap]m/i, ""); 
     }
     if (timeString.split(":").length === 2) timeString += ":00";
     if (!timeString.includes("T")) timeString = timeString.replace(" ", "T");
 
-    // Force -05:00 for Toronto/EST
-    const startDate = new Date(`${timeString}-05:00`); 
+    if (!/^\d{4}-\d{2}-\d{2}T\d{1,2}:\d{2}:\d{2}$/.test(timeString)) {
+        throw new Error("Please provide the time in HH:MM (24-hour) along with YYYY-MM-DD.");
+    }
+
+    // Normalize single-digit hour to two digits for consistency
+    timeString = timeString.replace(/T(\d):/, "T0$1:");
+
+    const startDate = fromZonedTime(timeString, TIMEZONE);
     const endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
 
-    console.log(`Booking: ${name} @ ${startDate.toLocaleString("en-US", {timeZone: "America/New_York"})}`);
+    console.log(`Booking: ${name} @ ${formatInTimeZone(startDate, TIMEZONE, "EEE, MMM d, h:mm a")}`);
 
     // GOOGLE CALENDAR
     try {
@@ -62,8 +92,8 @@ router.post("/book_appointment", async (req, res) => {
             requestBody: {
                 summary: `${name} - ${service || 'MedSpa Service'}`,
                 description: `Phone: ${phone}\nEmail: ${email}\nBooked via AI Receptionist`,
-                start: { dateTime: startDate.toISOString(), timeZone: "America/New_York" },
-                end: { dateTime: endDate.toISOString(), timeZone: "America/New_York" },
+                start: { dateTime: startDate.toISOString(), timeZone: TIMEZONE },
+                end: { dateTime: endDate.toISOString(), timeZone: TIMEZONE },
             }
         });
         console.log("Added to Google Calendar");
@@ -87,10 +117,7 @@ router.post("/book_appointment", async (req, res) => {
     if (error) throw new Error(`Database save failed: ${error.message}`);
 
     // SMS (Professional - No Emojis)
-    const readableDate = startDate.toLocaleString("en-US", {
-        timeZone: "America/New_York",
-        weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit"
-    });
+    const readableDate = formatInTimeZone(startDate, TIMEZONE, "EEE, MMM d, h:mm a");
 
     try {
         await client.messages.create({

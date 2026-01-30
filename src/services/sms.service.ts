@@ -1,10 +1,12 @@
 // src/services/sms.service.ts
 import twilio from "twilio";
 import dotenv from "dotenv";
+import { formatInTimeZone } from "date-fns-tz";
 
 dotenv.config();
 
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const TIMEZONE = "America/Toronto";
 
 const PRE_CARE_INSTRUCTIONS: Record<string, string> = {
   "Botox": "avoid alcohol 24hrs before and do not lay down for 4hrs after.",
@@ -19,9 +21,7 @@ export async function sendConfirmationSMS(to: string, name: string, date: string
   const instructions = PRE_CARE_INSTRUCTIONS[service] || "please arrive 10 mins early.";
   
   const dateObj = new Date(date);
-  const dateString = dateObj.toLocaleString("en-US", { 
-    weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true 
-  });
+  const dateString = formatInTimeZone(dateObj, TIMEZONE, "EEE, MMM d, h:mm a");
 
   // REMOVED: "Reply C to confirm"
   // KEPT: Pre-Care & Insurance Link

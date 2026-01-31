@@ -55,10 +55,10 @@ app.listen(PORT, () => {
   runScheduler(); // Run once immediately
   
   // Check every 60 seconds
-setInterval(() => {
-  console.log("⏰ Fast Scheduler Pulse (1m)...");
-  runScheduler();
-}, 60 * 1000);
+  setInterval(() => {
+    console.log("⏰ Scheduler Pulse (1m)...");
+    runScheduler();
+  }, 60 * 1000);
 });
 
 export default app;

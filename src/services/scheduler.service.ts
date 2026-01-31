@@ -35,8 +35,24 @@ export async function runScheduler() {
 
             for (const appt of upcomingAppts) {
                 try {
+                    if (!appt.client_phone) {
+                        continue;
+                    }
+
+                    const { data: claimed, error: claimError } = await supabase
+                        .from('appointments')
+                        .update({ reminder_sent: true })
+                        .eq('id', appt.id)
+                        .eq('reminder_sent', false)
+                        .select('client_name, client_phone, start_time');
+
+                    if (claimError || !claimed || claimed.length === 0) {
+                        continue;
+                    }
+
+                    const claimedAppt = claimed[0];
                     const readableDate = formatInTimeZone(
-                        new Date(appt.start_time),
+                        new Date(claimedAppt.start_time),
                         TIMEZONE,
                         "EEE, MMM d, h:mm a"
                     );
@@ -44,15 +60,10 @@ export async function runScheduler() {
                     await client.messages.create({
                         body: `Reminder: You have an appointment with Lumen Aesthetics on ${readableDate}. \n\nWe look forward to seeing you. Please call us if you need to reschedule or cancel.`,
                         from: process.env.TWILIO_PHONE_NUMBER,
-                        to: appt.client_phone
+                        to: claimedAppt.client_phone
                     });
 
-                    await supabase
-                        .from('appointments')
-                        .update({ reminder_sent: true })
-                        .eq('id', appt.id);
-
-                    console.log(`✅ Reminder sent to ${appt.client_name}`);
+                    console.log(`✅ Reminder sent to ${claimedAppt.client_name}`);
 
                 } catch (smsError) {
                     console.error(`Failed to send reminder to ${appt.client_name}:`, smsError);
@@ -111,18 +122,29 @@ export async function runScheduler() {
 
             for (const appt of pastAppointments) {
                 try {
-                    await client.messages.create({
-                        body: `Hello ${appt.client_name}, thank you for choosing Lumen Aesthetics. We hope you're loving your results! If you have a moment, we'd truly appreciate your feedback: ${REVIEW_LINK}`,
-                        from: process.env.TWILIO_PHONE_NUMBER,
-                        to: appt.client_phone
-                    });
+                    if (!appt.client_phone) {
+                        continue;
+                    }
 
-                    await supabase
+                    const { data: claimed, error: claimError } = await supabase
                         .from('appointments')
                         .update({ review_sent: true })
-                        .eq('id', appt.id);
+                        .eq('id', appt.id)
+                        .eq('review_sent', false)
+                        .select('client_name, client_phone');
 
-                    console.log(`✅ Review link sent to ${appt.client_name}`);
+                    if (claimError || !claimed || claimed.length === 0) {
+                        continue;
+                    }
+
+                    const claimedAppt = claimed[0];
+                    await client.messages.create({
+                        body: `Hello ${claimedAppt.client_name}, thank you for choosing Lumen Aesthetics. We hope you're loving your results! If you have a moment, we'd truly appreciate your feedback: ${REVIEW_LINK}`,
+                        from: process.env.TWILIO_PHONE_NUMBER,
+                        to: claimedAppt.client_phone
+                    });
+
+                    console.log(`✅ Review link sent to ${claimedAppt.client_name}`);
 
                 } catch (smsError) {
                     console.error(`Failed to send review link to ${appt.client_name}:`, smsError);
@@ -133,44 +155,4 @@ export async function runScheduler() {
         console.error("Review Logic Error:", err.message);
     }
 
-    // ==========================================
-    // 4. DEMO ONLY: FAKE PAYMENT RECEIPT (New Bookings) 💰
-    // ==========================================
-    try {
-        // Look for appointments created in the last 5 minutes
-        // (This ensures we catch the one you just booked in the demo)
-        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-
-        const { data: recentBookings } = await supabase
-            .from('appointments')
-            .select('*')
-            .eq('status', 'confirmed')
-            .gt('created_at', fiveMinutesAgo); // Only brand new bookings
-
-        if (recentBookings && recentBookings.length > 0) {
-            console.log(`💰 Sending demo receipts to ${recentBookings.length} new clients...`);
-
-            for (const appt of recentBookings) {
-                try {
-                    // 💎 The "Payment Processed" Receipt
-                    await client.messages.create({
-                        body: `Lumen Aesthetics: Payment Processed.\n\nA security deposit of $50.00 has been successfully credited to your file. Your reservation is now fully secured.\n\nThis amount will be deducted from your final invoice. Thank you.`,
-                        from: process.env.TWILIO_PHONE_NUMBER,
-                        to: appt.client_phone
-                    });
-
-                    console.log(`✅ Fake receipt sent to ${appt.client_name}`);
-                    sentReceipts.add(appt.id);
-
-                    // NOTE: In a real app, you would mark this as sent in DB
-                    // so it doesn't send twice. For a quick demo, this is fine.
-
-                } catch (smsError) {
-                    console.error(`Failed to send receipt to ${appt.client_name}:`, smsError);
-                }
-            }
-        }
-    } catch (err: any) {
-        console.error("Demo Logic Error:", err.message);
-    }
 }

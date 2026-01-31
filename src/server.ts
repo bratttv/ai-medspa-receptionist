@@ -11,7 +11,6 @@ import cancelRouter from "./routes/cancel";
 import availabilityRouter from "./routes/availability"; 
 import notifyRouter from "./routes/notify"; 
 import rescheduleRouter from "./routes/reschedule"; 
-import sendInsuranceRouter from './routes/send_insurance';
 import lookupClientRouter from './routes/lookup_client';
 
 // --- SERVICES ---
@@ -34,7 +33,6 @@ app.use("/", cancelRouter);
 app.use("/", availabilityRouter);
 app.use("/", notifyRouter);
 app.use("/", rescheduleRouter);
-app.use("/", sendInsuranceRouter);
 app.use("/", lookupClientRouter);
 
 // 👋 Health Check

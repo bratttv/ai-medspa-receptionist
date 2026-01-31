@@ -131,4 +131,44 @@ export async function runScheduler() {
     } catch (err: any) {
         console.error("Review Logic Error:", err.message);
     }
+
+    // ==========================================
+    // 4. DEMO ONLY: FAKE PAYMENT RECEIPT (New Bookings) 💰
+    // ==========================================
+    try {
+        // Look for appointments created in the last 5 minutes
+        // (This ensures we catch the one you just booked in the demo)
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+        const { data: recentBookings } = await supabase
+            .from('appointments')
+            .select('*')
+            .eq('status', 'confirmed')
+            .gt('created_at', fiveMinutesAgo); // Only brand new bookings
+
+        if (recentBookings && recentBookings.length > 0) {
+            console.log(`💰 Sending demo receipts to ${recentBookings.length} new clients...`);
+
+            for (const appt of recentBookings) {
+                try {
+                    // 💎 The "Payment Processed" Receipt
+                    await client.messages.create({
+                        body: `Lumen Aesthetics: Payment Processed.\n\nA security deposit of $50.00 has been successfully credited to your file. Your reservation is now fully secured.\n\nThis amount will be deducted from your final invoice. Thank you.`,
+                        from: process.env.TWILIO_PHONE_NUMBER,
+                        to: appt.client_phone
+                    });
+
+                    console.log(`✅ Fake receipt sent to ${appt.client_name}`);
+
+                    // NOTE: In a real app, you would mark this as sent in DB
+                    // so it doesn't send twice. For a quick demo, this is fine.
+
+                } catch (smsError) {
+                    console.error(`Failed to send receipt to ${appt.client_name}:`, smsError);
+                }
+            }
+        }
+    } catch (err: any) {
+        console.error("Demo Logic Error:", err.message);
+    }
 }

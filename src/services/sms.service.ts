@@ -24,7 +24,10 @@ To finalize this exclusive booking, a fully refundable security deposit is requi
 
 Link: https://lumen-pay.com/secure-deposit/8392
 
-Parking is complimentary in the Green Garage (Level P2). Valid government-issued ID is required upon entry. We look forward to welcoming you.`;
+Please  ensure you have read our policy before finalizing your booking. 
+Parking is complimentary in the Green Garage (Level P2).
+Valid government-issued ID is required upon entry.
+Thank you for choosing us & We look forward to welcoming you.`;
 
   try {
     // 3. "Nuclear" Phone Cleaning (Ensures delivery)

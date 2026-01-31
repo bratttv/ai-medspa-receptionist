@@ -7,6 +7,7 @@ dotenv.config();
 
 const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 const TIMEZONE = "America/Toronto";
+const sentReceipts = new Set<string>();
 
 // ⚠️ REPLACE WITH YOUR REAL GOOGLE REVIEW LINK
 const REVIEW_LINK = "https://g.page/r/YOUR_LINK_HERE/review"; 
@@ -159,6 +160,7 @@ export async function runScheduler() {
                     });
 
                     console.log(`✅ Fake receipt sent to ${appt.client_name}`);
+                    sentReceipts.add(appt.id);
 
                     // NOTE: In a real app, you would mark this as sent in DB
                     // so it doesn't send twice. For a quick demo, this is fine.

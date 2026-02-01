@@ -5,6 +5,7 @@ import { formatInTimeZone } from "date-fns-tz";
 
 dotenv.config();
 
+console.log("DEBUG SID:", process.env.TWILIO_ACCOUNT_SID ? "Found it ✅" : "MISSING ❌");
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 const TIMEZONE = "America/Toronto";
 

@@ -14,32 +14,34 @@ export const startScheduler = () => {
 
   console.log("Scheduler started.");
 
-  // keep your cron frequency if you like — this is safe either way
   cron.schedule('*/5 * * * *', async () => {
 
     try {
 
       const now = new Date();
 
-      // ⭐ CRITICAL FIX
-      // prevents brand-new bookings from firing reminders
+      // ⭐ prevents brand-new bookings from triggering reminders
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
 
-      // keep your original window logic
+      // keep your existing window logic
       const windowStart = new Date(now.getTime() + (23.5 * 60 * 60 * 1000));
       const windowEnd   = new Date(now.getTime() + (24.5 * 60 * 60 * 1000));
 
+      /**
+       * ⭐ IMPORTANT CHANGE HERE
+       * We update FIRST, then return rows.
+       * This prevents duplicate texts if cron overlaps.
+       */
+
       const { data: appts, error } = await supabase
         .from('appointments')
-        .select('*')
+        .update({ reminder_sent: true })
         .eq('status', 'confirmed')
         .eq('reminder_sent', false)
-
-        // ⭐ NEW GUARDRAIL
         .lte('created_at', fiveMinutesAgo.toISOString())
-
         .gte('start_time', windowStart.toISOString())
-        .lte('start_time', windowEnd.toISOString());
+        .lte('start_time', windowEnd.toISOString())
+        .select('*');   // returns the rows we just locked
 
       if (error) {
         console.error("Scheduler DB error:", error.message);
@@ -63,17 +65,17 @@ export const startScheduler = () => {
             to: appt.client_phone
           });
 
-          // update AFTER send (keeps your flow)
-          await supabase
-            .from('appointments')
-            .update({ reminder_sent: true })
-            .eq('id', appt.id);
-
           console.log(`Reminder sent for appointment ${appt.id}`);
 
         } catch (smsErr:any) {
 
           console.error("SMS failure:", smsErr.message);
+
+          // rollback so it retries next cron run
+          await supabase
+            .from('appointments')
+            .update({ reminder_sent: false })
+            .eq('id', appt.id);
         }
       }
 

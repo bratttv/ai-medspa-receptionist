@@ -3,8 +3,10 @@ import Twilio from "twilio";
 import dotenv from "dotenv";
 import { formatInTimeZone } from "date-fns-tz";
 
+
 dotenv.config();
 
+console.log("DEBUG SID:", process.env.TWILIO_ACCOUNT_SID ? "Found it ✅" : "MISSING ❌");
 const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 const TIMEZONE = "America/Toronto";
 const sentReceipts = new Set<string>();
@@ -38,6 +40,9 @@ export async function runScheduler() {
                     if (!appt.client_phone) {
                         continue;
                     }
+                    if (sentReceipts.has(`reminder:${appt.id}`)) {
+                        continue;
+                    }
 
                     const { data: claimed, error: claimError } = await supabase
                         .from('appointments')
@@ -63,6 +68,7 @@ export async function runScheduler() {
                         to: claimedAppt.client_phone
                     });
 
+                    sentReceipts.add(`reminder:${appt.id}`);
                     console.log(`✅ Reminder sent to ${claimedAppt.client_name}`);
 
                 } catch (smsError) {
@@ -125,6 +131,9 @@ export async function runScheduler() {
                     if (!appt.client_phone) {
                         continue;
                     }
+                    if (sentReceipts.has(`review:${appt.id}`)) {
+                        continue;
+                    }
 
                     const { data: claimed, error: claimError } = await supabase
                         .from('appointments')
@@ -144,6 +153,7 @@ export async function runScheduler() {
                         to: claimedAppt.client_phone
                     });
 
+                    sentReceipts.add(`review:${appt.id}`);
                     console.log(`✅ Review link sent to ${claimedAppt.client_name}`);
 
                 } catch (smsError) {

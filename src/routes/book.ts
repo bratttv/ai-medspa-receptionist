@@ -118,18 +118,25 @@ router.post("/book_appointment", async (req, res) => {
         console.error("Google Calendar Warning:", gError.message);
     }
 
-    // 6. SAVE TO SUPABASE
-    const { error } = await supabase.from('appointments').insert([{
-        client_name: name,
-        client_email: email || "",
-        client_phone: phone,
-        start_time: appointmentDate.toISOString(),
-        end_time: endDate.toISOString(),
-        status: 'confirmed',
-        service: service || 'MedSpa Service',      
-        reminder_sent: false,
-        review_sent: false
-    }]);
+    // Calculate reminder + review times
+const reminderAt = new Date(appointmentDate.getTime() - 24 * 60 * 60 * 1000);
+const reviewAt   = new Date(appointmentDate.getTime() + 24 * 60 * 60 * 1000);
+
+// 6. SAVE TO SUPABASE
+const { error } = await supabase.from('appointments').insert([{
+    client_name: name,
+    client_email: email || "",
+    client_phone: phone,
+    start_time: appointmentDate.toISOString(),
+    end_time: endDate.toISOString(),
+    status: 'confirmed',
+    service: service || 'MedSpa Service',      
+    reminder_sent: false,
+    review_sent: false,
+    reminder_at: reminderAt.toISOString(),
+    review_at: reviewAt.toISOString()
+}]);
+
 
     if (error) throw new Error(`Database Error: ${error.message}`);
 

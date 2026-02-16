@@ -1,6 +1,10 @@
 import twilio from "twilio";
 import { formatInTimeZone } from "date-fns-tz";
 
+console.log("TWILIO SID:", process.env.TWILIO_ACCOUNT_SID?.slice(0,6));
+console.log("TWILIO TOKEN LENGTH:", process.env.TWILIO_AUTH_TOKEN?.length);
+
+
 const TIMEZONE = "America/Toronto";
 
 /**

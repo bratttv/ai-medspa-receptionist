@@ -140,11 +140,10 @@ const { error } = await supabase.from('appointments').insert([{
 
     if (error) throw new Error(`Database Error: ${error.message}`);
 
-    // 7. TWO-STEP CLIENT SMS FLOW
-    // Step A: "Reserved" + deposit link (immediate)
-    // Step B: "Confirmed" with details (10 seconds later)
+    // 7. TWO-STEP CLIENT SMS
+    // Step A: Reserved + deposit link → immediate
+    // Step B: Confirmed → 10s later (simulates post-payment)
     try {
-        // --- STEP A: RESERVATION + DEPOSIT LINK ---
         await client.messages.create({
             body: `Lumen Aesthetics: Your reservation has been reserved.\n\nDate: ${readableDate}\nService: ${service || 'Treatment'}\n\nTo finalize this exclusive booking, a fully refundable security deposit is required. Please complete this securely below.\n\nLink: https://lumen-pay.com/secure-deposit/8392\n\nPlease ensure you have read our policy before finalizing your booking.\nParking is complimentary in the Green Garage (Level P2).\nValid government-issued ID is required upon entry.\n\nWe look forward to welcoming you.`,
             from: process.env.TWILIO_PHONE_NUMBER,
@@ -152,7 +151,6 @@ const { error } = await supabase.from('appointments').insert([{
         });
         console.log("📱 Step A: Reserved + deposit link sent");
 
-        // --- STEP B: CONFIRMATION (10 seconds later) ---
         setTimeout(async () => {
             try {
                 await client.messages.create({
@@ -164,7 +162,7 @@ const { error } = await supabase.from('appointments').insert([{
             } catch (e) {
                 console.error("Step B SMS Failed:", e);
             }
-        }, 10000); // 10 second delay
+        }, 10000);
 
     } catch (e) { console.error("SMS Failed:", e); }
 

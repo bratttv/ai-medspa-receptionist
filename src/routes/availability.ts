@@ -97,9 +97,20 @@ router.post("/check_availability", async (req, res) => {
 
     // Convert ISO if provided
     if (!date && startDateTime) {
-        const parsed = new Date(startDateTime);
-        if (!isNaN(parsed.getTime())) {
-            date = formatInTimeZone(parsed, TIMEZONE, "yyyy-MM-dd");
+        // ✅ FIX: Extract the date portion BEFORE timezone conversion.
+        // new Date("2025-02-17T00:00:00") parses as UTC midnight,
+        // which becomes Feb 16 in America/Toronto. Instead, grab the
+        // YYYY-MM-DD directly from the string when it's clearly a
+        // local-intent date from the AI.
+        const isoDateMatch = String(startDateTime).match(/^(\d{4}-\d{2}-\d{2})/);
+        if (isoDateMatch) {
+            date = isoDateMatch[1];
+        } else {
+            // Fallback: treat as local Toronto time
+            const parsed = new Date(startDateTime);
+            if (!isNaN(parsed.getTime())) {
+                date = formatInTimeZone(parsed, TIMEZONE, "yyyy-MM-dd");
+            }
         }
     }
 

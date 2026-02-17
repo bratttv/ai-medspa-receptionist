@@ -2,16 +2,17 @@ import { Router } from "express";
 
 const router = Router();
 
-/**
- * Vapi inbound webhook (test)
- */
-router.post("/voice/inbound", async (req, res) => {
-  console.log("VAPI INBOUND CALL");
-  console.log(req.body);
+router.post("/voice/inbound", (req, res) => {
 
-  return res.json({
-    message: "Voice webhook received successfully"
-  });
+  console.log("VAPI INBOUND CALL");
+
+  res.type("text/xml");
+
+  res.send(`
+    <Response>
+        <Say voice="alice">Please wait while we connect your call.</Say>
+    </Response>
+  `);
 });
 
 export default router;

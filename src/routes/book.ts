@@ -140,14 +140,32 @@ const { error } = await supabase.from('appointments').insert([{
 
     if (error) throw new Error(`Database Error: ${error.message}`);
 
-    // 7. CLIENT SMS
+    // 7. TWO-STEP CLIENT SMS FLOW
+    // Step A: "Reserved" + deposit link (immediate)
+    // Step B: "Confirmed" with details (10 seconds later)
     try {
+        // --- STEP A: RESERVATION + DEPOSIT LINK ---
         await client.messages.create({
-            body: `Lumen Aesthetics: Appointment Confirmed.\n\nDate: ${readableDate}\nService: ${service || 'Treatment'}\n\nParking: Free in Green Garage (Level P2).\nPlease bring valid ID.`,
+            body: `Lumen Aesthetics: Your reservation has been reserved.\n\nDate: ${readableDate}\nService: ${service || 'Treatment'}\n\nTo finalize this exclusive booking, a fully refundable security deposit is required. Please complete this securely below.\n\nLink: https://lumen-pay.com/secure-deposit/8392\n\nPlease ensure you have read our policy before finalizing your booking.\nParking is complimentary in the Green Garage (Level P2).\nValid government-issued ID is required upon entry.\n\nWe look forward to welcoming you.`,
             from: process.env.TWILIO_PHONE_NUMBER,
             to: phone
         });
-        console.log("📱 Client SMS Sent");
+        console.log("📱 Step A: Reserved + deposit link sent");
+
+        // --- STEP B: CONFIRMATION (10 seconds later) ---
+        setTimeout(async () => {
+            try {
+                await client.messages.create({
+                    body: `Lumen Aesthetics: Appointment Confirmed ✓\n\nDate: ${readableDate}\nService: ${service || 'Treatment'}\n\nParking: Free in Green Garage (Level P2).\nPlease bring valid government-issued ID.\n\nWe look forward to seeing you!`,
+                    from: process.env.TWILIO_PHONE_NUMBER,
+                    to: phone
+                });
+                console.log("📱 Step B: Confirmed SMS sent (10s delay)");
+            } catch (e) {
+                console.error("Step B SMS Failed:", e);
+            }
+        }, 10000); // 10 second delay
+
     } catch (e) { console.error("SMS Failed:", e); }
 
     // 8. TEAM NOTIFICATION
